@@ -1,9 +1,0 @@
-dist/
-frontend/dist/
-out/
-cache/
-node_modules/
-*.db
-*.db-*
-coverage/
-.tmp/

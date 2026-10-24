@@ -7,9 +7,10 @@ broadcast/
 horoi.db
 .env
 .env.local
+**/.env
+**/.env.local
 *.log
 .DS_Store
-lib/
 typechain-types/
 artifacts/
 coverage/
@@ -22,4 +23,6 @@ test-results/
 wsl-setup.sh
 wsl-*.sh
 .vercel
-.env*
+/backend/rust/target/
+.next/
+*.tsbuildinfo

@@ -1,0 +1,2105 @@
+HOROI — PRODUCT REQUIREMENTS DOCUMENT
+Version: 1.0
+Date: 20 October 2026
+Hackathon: ZECATHON
+Primary Track: Core & Tooling
+Status: Implementation specification
+Product Name: Horoi
+Repository Layout: backend/ frontend/ docs/
+
+======================================================================
+0. EXECUTIVE SUMMARY
+======================================================================
+
+Horoi is a privacy-preserving ownership-claim layer for Zcash Shielded Assets
+(ZSAs).
+
+A shielded asset can hide who owns it and how much they hold. That privacy
+creates a composability problem: applications cannot simply read a public token
+balance to decide whether a holder is eligible for a vote, reward, gated action,
+or snapshot-based campaign.
+
+Horoi lets a holder prove a statement such as:
+
+    "I held at least 100 units of Asset X at snapshot H"
+
+without revealing:
+
+    - wallet address;
+    - exact balance;
+    - private notes;
+    - unrelated transaction history;
+    - past or future spends.
+
+Horoi is NOT:
+
+    - a launchpad;
+    - an exchange;
+    - a stock market;
+    - a bridge;
+    - a generic wallet;
+    - a generic ZSA registry;
+    - an EVM smart-contract application.
+
+The product contribution is a reusable ZSA-specific ownership claim primitive
+plus a minimal demo application.
+
+Primary thesis:
+
+    PRIVATE ASSETS NEED PRIVATE COMPOSABILITY.
+
+Long thesis:
+
+    Shielded assets solve confidential ownership, but private ownership is not
+    useful to applications unless ownership can be consumed without unshielding
+    it. Horoi lets applications verify ZSA ownership conditions without learning
+    the holder's exact balance, address, or note history.
+
+Hackathon one-liner:
+
+    Horoi lets applications verify ZSA ownership without revealing the owner.
+
+======================================================================
+1. WHY THIS EXISTS
+======================================================================
+
+1.1 Current problem
+
+Public-token applications commonly implement holder logic like this:
+
+    address
+      -> read public balance at block H
+      -> compare balance >= threshold
+      -> allow vote / reward / access
+
+That pattern is incompatible with the privacy goal of ZSAs because the useful
+ownership state is shielded.
+
+Naive workarounds are unacceptable:
+
+    - reveal exact balance;
+    - reveal wallet address;
+    - reveal private notes;
+    - reveal a viewing key;
+    - maintain a centralized ownership database.
+
+Those approaches weaken or destroy the privacy property.
+
+1.2 Zcash-specific gap
+
+The Zcash draft:
+
+    "Air drops, Proof-of-Balance, and Stake-weighted Polling"
+
+defines a proof-of-balance direction for Orchard ZEC and explicitly says:
+
+    "Claim refers to a proof by a ZEC holder (TODO: support ZSAs)..."
+
+Horoi targets that exact missing ZSA-specific application primitive.
+
+1.3 Problems Horoi solves
+
+Horoi must provide:
+
+    1. immutable snapshot-bound claims;
+    2. AssetId-bound ownership statements;
+    3. balance-threshold proofs;
+    4. local witness construction;
+    5. local zero-knowledge proving;
+    6. domain-separated alternate nullifiers;
+    7. public proof verification;
+    8. note-level replay protection inside a claim domain;
+    9. an application-facing API;
+   10. a minimal frontend demonstrating the complete flow.
+
+======================================================================
+2. NOVELTY AND CLAIMS
+======================================================================
+
+2.1 What may be claimed
+
+The defensible product claim is:
+
+    Horoi implements a reusable ownership-claim layer for Zcash Shielded Assets
+    so applications can verify ZSA ownership conditions without requiring the
+    holder to expose exact private holdings.
+
+The exact target composition is:
+
+    ZSA notes
+      -> snapshot
+      -> AssetId-bound ownership proof
+      -> threshold condition
+      -> claim-specific alternate nullifiers
+      -> public verifier
+      -> note-level replay protection
+
+2.2 What must NOT be claimed
+
+Do not claim that Horoi invented:
+
+    - zero-knowledge ownership proofs;
+    - private token gating;
+    - ZSA issuance;
+    - shielded asset transfer;
+    - ZEC proof-of-balance;
+    - alternate nullifiers as a concept.
+
+Do not claim:
+
+    - "one person can only claim once";
+    - "one wallet can only claim once";
+    - "completely anonymous";
+    - "untraceable";
+    - "unlinkable under all network conditions";
+    - "audited";
+    - "production-ready";
+    - "ZSA is live on Zcash mainnet".
+
+2.3 Existing adjacent work
+
+Horoi must document adjacent systems honestly.
+
+Examples:
+
+    Cachet
+      - ZSA issuance
+      - registry
+      - browser holdings
+      - transfer
+      - burn
+      - swap
+
+    QEDIT ZSA tooling
+      - OrchardZSA development
+      - transaction tooling
+      - test environment
+
+    Zcash proof-of-balance draft
+      - Orchard ZEC snapshot claims
+      - alternate-nullifier concept
+      - ZSA support left as TODO
+
+Horoi is not allowed to copy an adjacent product's value proposition and rename
+it.
+
+======================================================================
+3. HACKATHON POSITIONING
+======================================================================
+
+Primary track:
+
+    CORE & TOOLING
+
+Why:
+
+Horoi is primarily reusable cryptographic/developer infrastructure for ZSA
+applications. The frontend is only a reference interface proving that the
+primitive is usable.
+
+Pitch:
+
+    "ZSA balances are private. Horoi makes those private balances composable."
+
+Problem statement:
+
+    "Once asset ownership is shielded, applications lose the public balance
+    primitive they normally use for voting, rewards, access, and snapshots.
+    Horoi restores that application primitive without exposing the holder."
+
+Core demo:
+
+    TEST ASSET
+      Alice: 250 units
+      Bob:    50 units
+
+    Claim:
+      "Prove >= 100 units at snapshot H"
+
+    Alice:
+      VALID
+
+    Bob:
+      INVALID
+
+    Public observer learns:
+      asset
+      threshold
+      snapshot
+      verification result
+
+    Public observer does NOT learn:
+      Alice's exact balance
+      Alice's wallet
+      Alice's private notes
+      Alice's transaction history
+
+======================================================================
+4. PRODUCT PRINCIPLES
+======================================================================
+
+P1. Privacy first
+
+Private wallet state remains client-side.
+
+P2. One cryptographic implementation
+
+Rust is the single source of truth for ZSA claim cryptography.
+
+TypeScript must never reimplement:
+
+    - AssetId validation math;
+    - note commitment logic;
+    - alternate-nullifier derivation;
+    - claim-domain field encoding;
+    - claim proof verification.
+
+P3. Testnet honesty
+
+ZSA remains experimental/testnet-grade.
+
+P4. Minimal code surface
+
+Do not create many tiny helpers, wrappers, services, repositories, or utility
+files when one cohesive domain file is clearer.
+
+P5. Fail closed
+
+Unknown or inconsistent cryptographic state must reject.
+
+P6. Immutable public statement
+
+After creation, a claim's cryptographic statement cannot change.
+
+P7. Explicit protocol version
+
+All proof bundles are versioned.
+
+P8. Minimal persistent data
+
+The backend stores only public claim metadata and replay-prevention data.
+
+======================================================================
+5. MVP USER FLOWS
+======================================================================
+
+5.1 Create Claim
+
+A creator enters:
+
+    name
+    description
+    AssetId
+    minimum balance
+    snapshot height
+    optional expiration
+
+Backend:
+
+    - validates input;
+    - resolves snapshot data;
+    - creates immutable claim metadata;
+    - creates a claim-specific domain;
+    - stores the claim.
+
+5.2 Generate Proof
+
+A holder opens a claim.
+
+Browser:
+
+    - loads claim public data;
+    - loads local prover WASM;
+    - obtains public ZSA chain data;
+    - scans/decrypts the holder's local testnet ZSA state;
+    - selects eligible notes;
+    - builds witnesses;
+    - creates alternate nullifiers;
+    - creates proof locally.
+
+No wallet secret is sent to the backend.
+
+5.3 Verify Proof
+
+Any verifier can verify a proof bundle against the immutable claim.
+
+Response:
+
+    VALID
+    or
+    INVALID
+
+5.4 Submit Claim
+
+A holder submits proof + public inputs + alternate nullifiers.
+
+Backend performs an atomic flow:
+
+    1. load claim;
+    2. reject expired claim;
+    3. compare all public inputs with stored claim metadata;
+    4. cryptographically verify proof;
+    5. check alternate nullifiers;
+    6. reject reused nullifier;
+    7. store accepted nullifiers;
+    8. return accepted result.
+
+======================================================================
+6. NULLIFIER SEMANTICS — IMPORTANT
+======================================================================
+
+Horoi MVP provides NOTE-LEVEL replay protection.
+
+Correct statement:
+
+    "The same contributing note cannot be reused in the same claim domain after
+    its alternate nullifier has been accepted."
+
+Incorrect statement:
+
+    "The same person can only claim once."
+
+Incorrect statement:
+
+    "The same wallet can only claim once."
+
+Why:
+
+A holder may have multiple separate eligible note sets. Alternate nullifiers
+prevent reuse of the same note in one claim domain, but they are not a universal
+human identity or wallet identity primitive.
+
+Horoi is not an anti-Sybil protocol.
+
+UI copy must say:
+
+    "These notes have already been used in this claim."
+
+Do not say:
+
+    "This user already claimed."
+
+unless a future protocol version actually proves that property.
+
+======================================================================
+7. CLAIM PROTOCOL
+======================================================================
+
+7.1 Public claim data
+
+Every claim contains:
+
+    protocolVersion
+    networkId
+    claimId
+    name
+    description
+    assetId
+    threshold
+    snapshotHeight
+    commitmentRoot
+    exclusionRoot
+    claimDomain
+    expiresAt
+
+7.2 Private witness
+
+A holder's witness may contain:
+
+    note data
+    note values
+    note randomness
+    spend-authority material required by the proof construction
+    commitment paths
+    nullifier non-membership witnesses
+    local wallet state
+
+These values must never be sent to Horoi backend.
+
+7.3 Statement
+
+The prover must establish that:
+
+    - each contributing note belongs to assetId;
+    - each note existed at snapshotHeight;
+    - each note was unspent at snapshotHeight;
+    - the prover has the required authority;
+    - the aggregate value of selected notes is >= threshold;
+    - each note maps to an alternate nullifier under claimDomain.
+
+7.4 Exact balance
+
+Exact aggregate balance must remain private.
+
+Only threshold satisfaction is public.
+
+7.5 Asset binding
+
+The circuit/proof MUST bind contributing notes to the public AssetId.
+
+A proof for Asset A cannot be accepted for Asset B.
+
+7.6 Snapshot binding
+
+Proof verification MUST bind:
+
+    networkId
+    snapshotHeight
+    commitmentRoot
+    exclusionRoot
+
+A claim cannot silently move to a newer snapshot.
+
+7.7 Integer values only
+
+Asset values are integer units.
+
+HTTP values use decimal strings.
+
+Example:
+
+    "100"
+
+Never use JavaScript floating point for ZSA amounts.
+
+7.8 Maximum notes
+
+Initial target:
+
+    MAX_NOTES = 4
+
+This is a practical bound for the hackathon.
+
+If profiling shows the proof is too slow, reduce the bound and document it.
+
+Do not pretend multi-note support exists if only one-note support is implemented.
+
+7.9 Claim domain
+
+Claim domain must be deterministic and domain-separated.
+
+Logical input:
+
+    "horoi-claim-v1"
+    networkId
+    claimId
+
+Exact byte encoding and field conversion live in Rust only.
+
+7.10 Claim ID
+
+Claim ID must be deterministic and versioned.
+
+Recommended logical preimage:
+
+    protocolVersion
+    networkId
+    assetId
+    threshold
+    snapshotHeight
+    commitmentRoot
+    exclusionRoot
+    expiresAt
+    creatorNonce
+
+Canonical serialization and hashing are owned by Rust.
+
+7.11 Protocol version
+
+MVP:
+
+    protocolVersion = 1
+
+Any breaking change to:
+
+    proof format
+    circuit statement
+    public-input encoding
+    nullifier encoding
+    domain construction
+
+requires a protocol version bump.
+
+======================================================================
+8. SMART CONTRACT DECISION
+======================================================================
+
+Horoi does NOT use a Solidity smart contract.
+
+Reason:
+
+The target Zcash ZSA/Orchard environment is not an EVM application environment.
+Adding Solidity purely to have a "smart contract" would be architecturally
+incorrect.
+
+Use these simple names instead:
+
+    ClaimCircuit
+    ClaimProof
+    ClaimVerifier
+
+They are Rust/ZK components, not Solidity contracts.
+
+Forbidden unless this PRD is explicitly revised:
+
+    contracts/
+    *.sol
+    Foundry
+    Hardhat
+
+Cross-chain verifier contracts are out of MVP scope.
+
+======================================================================
+9. TECHNOLOGY STACK
+======================================================================
+
+Use stable releases. Do not use canary, beta, RC, or nightly unless a pinned ZSA
+dependency forces a specific development revision.
+
+Baseline verified for 20 October 2026:
+
+Backend runtime/package manager:
+    Bun 1.4.3
+
+Backend HTTP:
+    Hono 4.13.13
+
+Validation:
+    Zod 4.6.7
+
+Database:
+    SQLite via Bun's built-in bun:sqlite
+
+Frontend:
+    Next.js 16.4 stable
+    App Router
+    React version compatible with locked Next.js 16.4 installation
+    TypeScript
+    Bun package manager
+
+Cryptographic core:
+    Rust 1.99.1 stable
+
+CSS:
+    app/globals.css
+    plain CSS
+
+Do NOT install by default:
+
+    Tailwind
+    shadcn
+    Material UI
+    Chakra
+    Redux
+    Zustand
+    React Query
+    Prisma
+    Drizzle
+    TypeORM
+    Playwright
+    Cypress
+    Vitest
+    Jest
+
+Reason:
+
+The MVP has a small surface. Extra frameworks increase dependency and file
+count without solving a current requirement.
+
+Zcash/ZSA dependencies:
+
+    Use the QEDIT OrchardZSA-compatible code required by the active ZSA test
+    environment.
+
+Important:
+
+    Pin exact git revisions.
+    Never rely on moving branches without a revision pin.
+
+======================================================================
+10. REPOSITORY STRUCTURE
+======================================================================
+
+There must be exactly three top-level directories:
+
+    backend/
+    frontend/
+    docs/
+
+No fourth top-level project directory.
+
+Do NOT add:
+
+    contracts/
+    packages/
+    shared/
+    common/
+    utils/
+    helpers/
+    services/
+    scripts/
+    infra/
+
+unless this PRD is intentionally updated first.
+
+Recommended layout:
+
+backend/
+    package.json
+    bun.lock
+    tsconfig.json
+    .env.example
+    server.ts
+    config.ts
+    db.ts
+    schema.ts
+    claim.ts
+    zcash.ts
+    proof.ts
+    migrations/
+        001_init.sql
+    rust/
+        Cargo.toml
+        Cargo.lock
+        rust-toolchain.toml
+        src/
+            lib.rs
+            claim.rs
+            zsa.rs
+        tests/
+            claim.rs
+
+frontend/
+    package.json
+    bun.lock
+    tsconfig.json
+    next.config.ts
+    .env.example
+    app/
+        layout.tsx
+        page.tsx
+        globals.css
+        claims/
+            page.tsx
+            [id]/
+                page.tsx
+        create/
+            page.tsx
+        verify/
+            page.tsx
+    lib/
+        api.ts
+        proof.ts
+    public/
+        claim.wasm
+
+docs/
+    PRD.txt
+    ARCHITECTURE.md
+    API.md
+    CRYPTO.md
+    ERRORS.md
+    SECURITY.md
+    SETUP.md
+    TESTING.md
+    HACKATHON.md
+    REFERENCES.md
+
+10.1 File-count rule
+
+Do not create a file because a function "might be reusable later."
+
+Create a file only when it owns a clear responsibility.
+
+Forbidden patterns for MVP:
+
+    backend/helpers/date.ts
+    backend/utils/string.ts
+    backend/services/claimService.ts
+    backend/repositories/claimRepository.ts
+    frontend/components/Button.tsx
+    frontend/components/Card.tsx
+
+unless the code actually becomes large enough to justify extraction.
+
+10.2 No duplicate models
+
+HTTP schemas live in backend/schema.ts.
+
+Claim business logic lives in backend/claim.ts.
+
+Cryptographic claim structures live in Rust.
+
+Do not create three different versions of the same claim type.
+
+======================================================================
+11. BACKEND RESPONSIBILITIES
+======================================================================
+
+11.1 server.ts
+
+Owns:
+
+    Hono application
+    route registration
+    CORS
+    body-size limit
+    request ID
+    error mapping
+    health endpoint
+    startup
+
+Must not contain cryptographic logic.
+
+11.2 config.ts
+
+Owns validated environment variables.
+
+Parse configuration once at startup.
+
+Invalid configuration must stop startup.
+
+11.3 db.ts
+
+Owns:
+
+    SQLite connection
+    migration execution
+    prepared statements
+    transactions
+
+Rules:
+
+    enable foreign keys
+    use parameterized queries
+    no string-built SQL from user input
+
+11.4 schema.ts
+
+Owns:
+
+    Zod request schemas
+    Zod response schemas where useful
+    HTTP input normalization
+
+No database access.
+
+11.5 claim.ts
+
+Owns:
+
+    create claim
+    list claims
+    get claim
+    expiration rules
+    immutable-field comparison
+    nullifier consumption transaction
+
+11.6 zcash.ts
+
+Owns public chain access only:
+
+    network identification
+    current height
+    block/snapshot retrieval
+    roots
+    public data required for witnesses
+
+Must not contain private wallet keys.
+
+11.7 proof.ts
+
+Owns the bridge to the Rust verifier.
+
+There must be one verification implementation.
+
+Allowed integration order:
+
+    1. stable Bun-compatible FFI if proven reliable;
+    2. one long-lived verifier process with a strict local protocol;
+    3. command invocation only as a documented hackathon fallback.
+
+Do not spawn an expensive verifier per request if a persistent verifier is
+practical.
+
+======================================================================
+12. RUST RESPONSIBILITIES
+======================================================================
+
+12.1 lib.rs
+
+Expose only the minimal stable interface required by:
+
+    native verification
+    WASM proving
+
+12.2 claim.rs
+
+Owns:
+
+    ClaimCircuit
+    ClaimProof
+    ClaimVerifier
+    public-input encoding
+    canonical claim encoding
+    claim ID
+    claim domain
+    threshold logic
+    alternate-nullifier derivation
+    proof creation
+    proof verification
+
+12.3 zsa.rs
+
+Owns the unstable ZSA dependency boundary:
+
+    AssetId handling
+    OrchardZSA note handling
+    commitment paths
+    snapshot witness handling
+    nullifier witness handling
+    conversion from QEDIT types into Horoi types
+
+Keep QEDIT-specific types localized here where possible.
+
+======================================================================
+13. DATABASE
+======================================================================
+
+Use SQLite only.
+
+MVP tables:
+
+TABLE claims
+
+    id TEXT PRIMARY KEY
+    protocol_version INTEGER NOT NULL
+    network_id TEXT NOT NULL
+    name TEXT NOT NULL
+    description TEXT NOT NULL
+    asset_id TEXT NOT NULL
+    threshold TEXT NOT NULL
+    snapshot_height INTEGER NOT NULL
+    commitment_root TEXT NOT NULL
+    exclusion_root TEXT NOT NULL
+    claim_domain TEXT NOT NULL UNIQUE
+    expires_at INTEGER NULL
+    created_at INTEGER NOT NULL
+
+TABLE nullifiers
+
+    claim_id TEXT NOT NULL
+    nullifier TEXT NOT NULL
+    created_at INTEGER NOT NULL
+
+    PRIMARY KEY (claim_id, nullifier)
+    FOREIGN KEY (claim_id) REFERENCES claims(id)
+
+Do NOT create:
+
+    users
+    wallets
+    balances
+    notes
+    seeds
+    viewing_keys
+    sessions
+
+for MVP.
+
+13.1 Proof storage
+
+Do not persist full submitted proofs by default.
+
+Reason:
+
+A proof plus request timing can become unnecessary linkability data.
+
+Verify, consume the minimum replay state, then discard the proof payload.
+
+======================================================================
+14. API
+======================================================================
+
+Base:
+
+    /api/v1
+
+14.1 GET /health
+
+Response:
+
+    {
+      "ok": true,
+      "version": "1.0.0",
+      "network": "zsa-testnet"
+    }
+
+14.2 GET /claims
+
+Public claim list.
+
+Optional query:
+
+    limit
+    cursor
+    status
+
+Keep pagination simple.
+
+14.3 GET /claims/:id
+
+Returns canonical public claim data.
+
+14.4 POST /claims
+
+Request:
+
+    {
+      "name": "ACME Holder Test",
+      "description": "Prove at least 100 ACME at the selected snapshot.",
+      "assetId": "...",
+      "threshold": "100",
+      "snapshotHeight": 12345,
+      "expiresAt": null
+    }
+
+Backend:
+
+    validate
+      -> verify AssetId encoding
+      -> verify snapshot exists
+      -> resolve roots
+      -> create nonce
+      -> call Rust canonical claim builder
+      -> persist immutable claim
+
+14.5 POST /proofs/verify
+
+Stateless proof verification.
+
+Request:
+
+    {
+      "claimId": "...",
+      "protocolVersion": 1,
+      "proof": "...base64...",
+      "publicInputs": { ... }
+    }
+
+Valid response:
+
+    {
+      "valid": true,
+      "claimId": "...",
+      "statement": {
+        "assetId": "...",
+        "threshold": "100",
+        "snapshotHeight": 12345
+      }
+    }
+
+This endpoint does not consume nullifiers.
+
+14.6 POST /claims/:id/submit
+
+State-changing submission.
+
+Request:
+
+    proof
+    publicInputs
+    alternateNullifiers
+
+Atomic sequence:
+
+    load claim
+      -> reject expired
+      -> compare public inputs
+      -> verify proof
+      -> check nullifiers
+      -> insert nullifiers
+      -> commit
+
+Two concurrent submissions with the same nullifier cannot both succeed.
+
+======================================================================
+15. FRONTEND MVP
+======================================================================
+
+Frontend is intentionally minimal.
+
+Design polish happens after protocol works.
+
+No launchpad UI.
+
+No market cap.
+
+No token price chart.
+
+No buy/sell buttons.
+
+No fake stocks.
+
+15.1 /
+
+Hero:
+
+    HOROI
+
+    Prove what you hold.
+    Reveal nothing else.
+
+    ZSA ownership claims without exposing wallet balances.
+
+Buttons:
+
+    Browse Claims
+    Create Claim
+
+Privacy explanation:
+
+    PUBLIC
+      Asset
+      Threshold
+      Snapshot
+      Proof result
+
+    PRIVATE
+      Exact balance
+      Wallet
+      Notes
+      History
+
+15.2 /claims
+
+Simple claim cards/rows:
+
+    claim name
+    shortened AssetId
+    threshold
+    snapshot height
+    status
+
+15.3 /claims/[id]
+
+Display:
+
+    name
+    description
+    AssetId
+    threshold
+    snapshot
+    expiration
+    network
+
+Actions:
+
+    Generate Proof
+    Submit Claim
+
+Show:
+
+    "Proof generation runs locally."
+
+15.4 /create
+
+Fields:
+
+    Name
+    Description
+    AssetId
+    Minimum balance
+    Snapshot height
+    Expiration
+
+No minting.
+
+15.5 /verify
+
+Allow proof bundle input.
+
+Return:
+
+    VALID
+    or
+    INVALID
+
+For valid proof show:
+
+    AssetId
+    threshold
+    snapshot
+    protocol version
+
+Never invent a holder identity.
+
+15.6 Language
+
+Preferred:
+
+    "Exact balance stays private."
+    "Proof generated locally."
+    "These notes have already been used in this claim."
+
+Avoid:
+
+    "Anonymous forever."
+    "Impossible to trace."
+    "One wallet, one claim."
+
+======================================================================
+16. BROWSER PROVER
+======================================================================
+
+Canonical Rust source:
+
+    backend/rust/
+
+WASM artifact:
+
+    frontend/public/claim.wasm
+
+frontend/lib/proof.ts must remain thin.
+
+It may:
+
+    load WASM
+    pass public claim data
+    pass browser-local witness data
+    return proof bundle
+    map known WASM errors to UI messages
+
+It must NOT:
+
+    recreate cryptographic rules
+    derive nullifiers independently
+    derive AssetIds independently
+    upload private wallet state
+
+For hackathon demo, a browser-local TESTNET seed is acceptable if production
+wallet integration is not practical.
+
+Requirements:
+
+    TESTNET ONLY label
+    never sent to backend
+    no real funds
+    no automatic cloud persistence
+
+======================================================================
+17. ZSA TESTNET INTEGRATION
+======================================================================
+
+Target the active QEDIT OrchardZSA development/test environment.
+
+Do not target Zcash mainnet.
+
+Before implementation, the coding agent must inspect and pin:
+
+    QEDIT orchard revision
+    QEDIT librustzcash revision
+    compatible Zebra revision / testnet configuration
+
+Record exact revisions in:
+
+    docs/SETUP.md
+    Cargo.toml
+    Cargo.lock
+
+Never depend only on a moving branch.
+
+ZSA testnets can reset.
+
+Therefore:
+
+    - store network identity with every claim;
+    - detect incompatible/reset chain state;
+    - reject stale snapshot claims when roots no longer correspond to the
+      active test chain;
+    - use deterministic local regtest for core cryptographic development where
+      practical.
+
+======================================================================
+18. ERROR MODEL
+======================================================================
+
+All HTTP errors:
+
+    {
+      "error": {
+        "code": "PROOF_INVALID",
+        "message": "The proof could not be verified.",
+        "requestId": "..."
+      }
+    }
+
+Stable MVP codes:
+
+    BAD_REQUEST
+    INVALID_ASSET_ID
+    INVALID_THRESHOLD
+    INVALID_SNAPSHOT
+    CLAIM_NOT_FOUND
+    CLAIM_EXPIRED
+    NULLIFIER_USED
+    PROOF_INVALID
+    PROOF_INPUT_MISMATCH
+    ZSA_UNSUPPORTED
+    SNAPSHOT_UNAVAILABLE
+    ZCASH_RPC_UNAVAILABLE
+    PROVER_UNAVAILABLE
+    INTERNAL_ERROR
+
+docs/ERRORS.md must contain for every error:
+
+    code
+    HTTP status
+    cause
+    safe retry behavior
+    user-facing message
+    operator action if relevant
+
+Rules:
+
+    - no raw cryptographic stack trace in HTTP response;
+    - no wallet-sensitive values in logs;
+    - unknown proof failure = failure, never partial success.
+
+======================================================================
+19. SECURITY
+======================================================================
+
+19.1 Backend must never receive
+
+    seed phrase
+    spending key
+    full viewing key
+    decrypted note plaintext
+    exact private balance
+
+19.2 Logging
+
+Do not log proof-submission request bodies.
+
+Do not log:
+
+    wallet material
+    proof bodies
+    full alternate nullifiers at normal info level
+    private witness data
+
+Normal structured log:
+
+    requestId
+    route
+    status
+    duration
+    claimId
+
+19.3 Database
+
+Use:
+
+    prepared statements
+    foreign keys
+    transactions
+
+Nullifier check + insert must be atomic.
+
+19.4 Dependencies
+
+Commit:
+
+    bun.lock
+    Cargo.lock
+
+Pin ZSA git revisions.
+
+Do not add custom crypto when Zcash/Orchard primitives exist.
+
+19.5 Frontend privacy
+
+No third-party analytics in MVP.
+
+No ad pixels.
+
+No session replay SDK.
+
+No remote fonts required.
+
+Use system fonts.
+
+19.6 CSP
+
+Add a restrictive Content Security Policy compatible with the selected WASM
+loading mode.
+
+Document any WASM CSP exception.
+
+19.7 Testnet warning
+
+Every proving screen must show:
+
+    ZSA TESTNET
+    Experimental
+    Unaudited
+    Do not use real funds
+
+======================================================================
+20. TESTING AND VALIDATION — KEEP IT SMALL
+======================================================================
+
+This project must NOT accumulate many test files.
+
+20.1 Automated test policy
+
+Do NOT add automated test suites for frontend or Bun API by default.
+
+Forbidden by default:
+
+    frontend/**/*.test.ts
+    frontend/**/*.spec.ts
+    backend/**/*.test.ts
+    backend/**/*.spec.ts
+    Playwright
+    Cypress
+    Vitest
+    Jest
+
+Do not create tests for trivial:
+
+    rendering
+    getters
+    static strings
+    route wrappers
+    schema passthrough
+
+20.2 The one automated test file
+
+Keep one Rust integration test file:
+
+    backend/rust/tests/claim.rs
+
+This file covers only cryptographic/protocol invariants that cannot be safely
+validated by clicking through a browser.
+
+Required cases:
+
+    valid threshold proof verifies
+    insufficient value does not produce/verify an eligible proof
+    wrong AssetId fails
+    wrong snapshot/root fails
+    modified public input fails
+    same note + same domain derives same alternate nullifier
+    same note + different domain derives different alternate nullifier
+    invalid witness fails
+    proof serialization round trip
+
+If multi-note proving is implemented:
+
+    aggregation >= threshold succeeds
+    aggregation < threshold fails
+
+No extra Rust test file unless there is a distinct cryptographic subsystem that
+cannot reasonably fit in claim.rs.
+
+20.3 Static validation
+
+Backend:
+
+    bun install --frozen-lockfile
+    bun check
+    bun run build or equivalent compile validation
+
+Frontend:
+
+    bun install --frozen-lockfile
+    bun check
+    bun run build
+
+Rust:
+
+    cargo fmt --check
+    cargo check --locked
+    cargo test --locked --test claim
+
+Do not add a large lint/tool chain only for the hackathon.
+
+20.4 Browser testing
+
+Frontend and end-to-end behavior must be tested through the ChatGPT browser,
+not through a new browser automation test suite.
+
+Preferred process:
+
+    1. run the app or expose a preview URL;
+    2. open it using ChatGPT Browser / connected browser;
+    3. exercise the actual UI;
+    4. inspect browser/runtime errors;
+    5. fix implementation;
+    6. repeat until the acceptance flow passes.
+
+Browser smoke flow:
+
+    /
+      -> hero renders
+      -> Browse Claims works
+
+    /create
+      -> invalid AssetId shows documented error
+      -> valid test claim can be created
+
+    /claims
+      -> new claim appears
+
+    /claims/:id
+      -> metadata matches created claim
+      -> proof UI initializes
+      -> no wallet secret is sent in network requests
+
+    Generate Proof
+      -> local prover loads
+      -> proof generated for eligible test wallet
+
+    Submit Claim
+      -> valid proof accepted
+
+    Repeat same contributing notes
+      -> NULLIFIER_USED
+
+    /verify
+      -> accepted proof verifies
+      -> tampered proof returns INVALID
+
+20.5 Browser privacy inspection
+
+During browser testing, inspect network requests.
+
+The following must never appear in request payloads:
+
+    seed phrase
+    spend key
+    viewing key
+    exact private balance
+    decrypted private note data
+
+20.6 No test theatre
+
+Do not create fake tests merely to increase test count.
+
+For Horoi:
+
+    cryptographic invariants -> automated Rust test
+    UI/E2E behavior          -> ChatGPT Browser
+    TypeScript correctness   -> bun check + build
+
+That is the intended validation strategy.
+
+======================================================================
+21. DOCUMENTATION
+======================================================================
+
+Documentation is part of the product.
+
+All implementation decisions that affect privacy, proof semantics, or network
+compatibility must be documented.
+
+21.1 docs/PRD.txt
+
+This document.
+
+21.2 docs/ARCHITECTURE.md
+
+Must describe:
+
+    browser privacy boundary
+    backend boundary
+    Rust/WASM boundary
+    Zcash/ZSA dependencies
+    proof generation flow
+    proof verification flow
+    nullifier storage flow
+
+Include one concise architecture diagram.
+
+21.3 docs/API.md
+
+Document every HTTP route with:
+
+    method
+    path
+    request
+    response
+    error codes
+
+21.4 docs/CRYPTO.md
+
+Must document:
+
+    exact public statement
+    exact private witness
+    AssetId binding
+    snapshot binding
+    threshold semantics
+    alternate-nullifier semantics
+    claim-domain construction
+    claim ID construction
+    protocol version
+    known assumptions
+    known limitations
+
+No marketing language in CRYPTO.md.
+
+21.5 docs/ERRORS.md
+
+Central error catalog.
+
+Do not duplicate full error descriptions across other docs.
+
+Other docs link to ERRORS.md.
+
+21.6 docs/SECURITY.md
+
+Document:
+
+    assets to protect
+    trust boundaries
+    backend non-custody
+    private-data policy
+    log policy
+    replay model
+    testnet warning
+    known attacks
+    non-goals
+    unaudited status
+
+21.7 docs/SETUP.md
+
+Document exact:
+
+    Bun version
+    Rust version
+    dependency installation
+    environment variables
+    QEDIT revisions
+    Zebra/testnet endpoint
+    WASM build
+    backend run
+    frontend run
+
+21.8 docs/TESTING.md
+
+Document the minimal validation policy from Section 20.
+
+Explicitly state:
+
+    "UI and end-to-end validation uses ChatGPT Browser. The repository does not
+    carry Playwright/Cypress/Vitest frontend test suites."
+
+21.9 docs/HACKATHON.md
+
+Must contain:
+
+    thesis
+    problem
+    why Zcash
+    why ZSA
+    novelty boundary
+    demo steps
+    measured results
+    limitations
+    references
+
+Do not make unverified "first ever" claims.
+
+21.10 docs/REFERENCES.md
+
+Pin references used to implement the protocol.
+
+At minimum:
+
+    Zcash developer docs
+    https://zcash.readthedocs.io/en/latest/
+
+    Zcash Improvement Proposals
+    https://zips.z.cash/
+
+    ZIP 226
+    Orchard Zcash Shielded Assets transfer/burn specification
+
+    ZIP 227
+    Issuance of Zcash Shielded Assets
+
+    Orchard proof-of-balance draft
+    zcash/zips:
+    zips/draft-str4d-orchard-balance-proof.md
+
+    librustzcash
+    https://github.com/zcash/librustzcash
+
+    Zebra
+    https://github.com/ZcashFoundation/zebra
+
+    QEDIT Orchard / librustzcash ZSA work
+    Record exact repository + revision used.
+
+    Cachet
+    https://github.com/cachet-zec/cachet
+
+NEAR Intents is NOT a core dependency for Horoi MVP and should not be added just
+because it appears in general ZECATHON resources.
+
+======================================================================
+22. CODE QUALITY RULES
+======================================================================
+
+22.1 Naming
+
+Names must describe what the code does.
+
+Good:
+
+    createClaim
+    getClaim
+    verifyProof
+    submitClaim
+    getSnapshot
+    ClaimCircuit
+    ClaimVerifier
+
+Avoid:
+
+    manager
+    engine
+    orchestrator
+    handlerFactory
+    gatewayService
+    processor
+    coordinator
+
+unless that word is truly the domain concept.
+
+22.2 Functions
+
+Prefer small, readable functions.
+
+Do not split a five-line function into a separate helper file.
+
+22.3 Comments
+
+Comment:
+
+    cryptographic assumptions
+    protocol constraints
+    non-obvious security behavior
+    ZSA compatibility workarounds
+
+Do not comment obvious syntax.
+
+22.4 Errors
+
+Do not repeat the same error text throughout the code.
+
+Use stable error codes and central HTTP mapping.
+
+22.5 TypeScript
+
+Use:
+
+    strict TypeScript
+    unknown for untrusted exceptions/input where appropriate
+    Zod at HTTP boundaries
+    explicit result handling for expected failures
+
+Avoid:
+
+    any
+    non-null assertions without proof
+    unsafe JSON casts
+    floating-point token values
+
+22.6 Rust
+
+Use:
+
+    stable Rust
+    checked conversions
+    explicit error enums
+    zeroization where applicable for secret material
+    no unwrap/expect on untrusted runtime input
+    constant-time primitives provided by upstream cryptographic libraries
+
+Do not roll custom cryptography.
+
+22.7 No dead code
+
+Do not keep:
+
+    unused routes
+    future placeholder modules
+    commented-out implementations
+    duplicate schemas
+    unused packages
+
+======================================================================
+23. IMPLEMENTATION PHASES
+======================================================================
+
+PHASE 0 — VERIFY DEPENDENCIES
+
+Before writing product code:
+
+    inspect current QEDIT ZSA repositories
+    pin compatible revisions
+    confirm active testnet/regtest workflow
+    compile a minimal ZSA transaction path
+
+Output:
+
+    docs/SETUP.md revisions section
+
+Stop if dependencies cannot be reproduced.
+
+PHASE 1 — RUST CLAIM CORE
+
+Implement:
+
+    public claim structure
+    canonical encoding
+    claim ID
+    domain encoding
+    ZSA AssetId binding
+    snapshot binding
+    threshold logic
+    alternate nullifier
+    ClaimCircuit
+    ClaimVerifier
+
+Validate with:
+
+    backend/rust/tests/claim.rs
+
+No frontend work should substitute for incomplete cryptographic semantics.
+
+PHASE 2 — WASM PROVER
+
+Expose the same Rust claim logic to browser WASM.
+
+Demonstrate:
+
+    local witness
+    local proof
+    no wallet secret sent to server
+
+PHASE 3 — BUN API
+
+Implement:
+
+    database
+    claim creation
+    claim retrieval
+    stateless verification
+    stateful submit
+    nullifier replay protection
+    error model
+
+PHASE 4 — MINIMAL FRONTEND
+
+Implement only:
+
+    /
+    /claims
+    /claims/[id]
+    /create
+    /verify
+
+Keep visual design minimal.
+
+PHASE 5 — CHATGPT BROWSER VALIDATION
+
+Run the complete acceptance flow through ChatGPT Browser.
+
+Do not add Playwright/Cypress to compensate for browser bugs.
+
+Fix the real implementation.
+
+PHASE 6 — DOCUMENTATION + HACKATHON DEMO
+
+Complete:
+
+    ARCHITECTURE.md
+    API.md
+    CRYPTO.md
+    ERRORS.md
+    SECURITY.md
+    SETUP.md
+    TESTING.md
+    HACKATHON.md
+    REFERENCES.md
+
+Record actual measured proof time and proof size.
+
+======================================================================
+24. ACCEPTANCE CRITERIA
+======================================================================
+
+Horoi MVP is complete only when all are true.
+
+A. Repository
+
+    exactly backend/, frontend/, docs/ at top level
+
+B. ZSA
+
+    works against pinned compatible ZSA development/test environment
+
+C. Claim
+
+    immutable AssetId + threshold + snapshot claim can be created
+
+D. Privacy
+
+    wallet secret/private notes/exact balance never sent to backend
+
+E. Proof
+
+    eligible holder can create a real proof
+
+F. Verification
+
+    valid proof verifies
+    tampered proof fails
+    wrong asset fails
+    wrong snapshot fails
+
+G. Replay
+
+    already-used contributing note is rejected in the same claim domain
+
+H. Domain separation
+
+    same note derives distinct alternate-nullifier output under a different
+    claim domain according to the implemented protocol rules
+
+I. Browser
+
+    complete flow passes through ChatGPT Browser
+
+J. Build
+
+    frontend builds
+    backend typechecks/builds
+    Rust checks/tests pass
+
+K. Documentation
+
+    all docs in Section 21 exist and match implementation
+
+L. Honesty
+
+    UI and hackathon docs say:
+      testnet
+      experimental
+      unaudited
+      note-level replay protection
+
+======================================================================
+25. NON-GOALS
+======================================================================
+
+Do not add during MVP:
+
+    token launchpad
+    ZSA minting UI
+    ZSA marketplace
+    stock trading
+    order book
+    swap UI
+    bridge
+    NEAR Intents
+    x402
+    payment facilitator
+    identity/KYC system
+    anti-Sybil identity
+    governance platform
+    dividend platform
+    mobile app
+    browser extension
+    generic wallet
+    Solidity contracts
+    admin dashboard
+    analytics dashboard
+    social login
+    account system
+
+Those can become future integrations after the claim primitive works.
+
+======================================================================
+26. FUTURE EXTENSIONS
+======================================================================
+
+Only after MVP:
+
+    private holder voting
+    private airdrop eligibility
+    private rewards
+    private membership
+    ZSA token gating
+    ZSA shareholder actions
+    selective disclosure
+    weighted claims
+    external verifier SDK
+    wallet integrations
+    cross-chain proof verification
+
+These are integrations, not MVP requirements.
+
+======================================================================
+27. DEMO SCRIPT
+======================================================================
+
+Demo asset:
+
+    ACME
+    Clearly label:
+      "Demo ZSA. No real-world security claim."
+
+State:
+
+    Alice holds 250 ACME
+    Bob holds 50 ACME
+
+Create:
+
+    Claim:
+      "ACME 100+ Holder"
+      threshold = 100
+      snapshot = H
+
+Alice flow:
+
+    Open claim
+      -> Generate Proof
+      -> browser proves locally
+      -> Submit
+      -> ACCEPTED
+
+Show privacy:
+
+    exact balance = hidden
+    wallet = hidden
+    notes = hidden
+
+Bob flow:
+
+    Open same claim
+      -> proof cannot satisfy threshold
+      -> INVALID
+
+Replay flow:
+
+    Alice resubmits same contributing notes
+      -> NULLIFIER_USED
+
+Different domain:
+
+    Create second claim
+      -> new claim domain
+      -> new alternate-nullifier values
+      -> no direct claim-domain reuse
+
+Do not fake chain state in the final hackathon demo if the submission claims a
+real ZSA testnet integration.
+
+======================================================================
+28. README/HACKATHON COPY
+======================================================================
+
+Recommended headline:
+
+    Horoi
+    Private ownership claims for Zcash Shielded Assets.
+
+Recommended short description:
+
+    Horoi lets applications verify that a holder met a ZSA balance condition at
+    a chain snapshot without learning the holder's exact balance, wallet
+    address, or private transaction history.
+
+Recommended thesis:
+
+    Private assets need private composability.
+
+Recommended problem line:
+
+    Shielding ownership should not force applications to choose between privacy
+    and utility.
+
+Recommended technical line:
+
+    Horoi binds a ZSA AssetId, balance threshold, and snapshot into a
+    zero-knowledge claim, then uses claim-domain alternate nullifiers for
+    note-level replay protection.
+
+======================================================================
+29. IMPLEMENTATION INSTRUCTIONS FOR CODING AGENT
+======================================================================
+
+Before modifying code:
+
+    1. inspect all relevant current files;
+    2. inspect AGENTS.md/AGENT.md if one exists;
+    3. inspect current dependency state;
+    4. inspect exact ZSA revisions;
+    5. map affected modules and side effects;
+    6. list assumptions that are not yet proven.
+
+Do not invent missing ZSA APIs.
+
+If upstream behavior is unclear:
+
+    inspect upstream source/spec first.
+
+Do not add dependencies casually.
+
+Do not commit, push, deploy, merge, or publish unless explicitly requested.
+
+Keep changes surgical.
+
+When a design choice conflicts with privacy or cryptographic correctness:
+
+    correctness wins over convenience.
+
+When implementation differs from this PRD because of real upstream constraints:
+
+    update the appropriate docs and explain the exact reason.
+
+======================================================================
+30. VERSION SOURCES CHECKED FOR THIS PRD
+======================================================================
+
+Stable stack references checked on 20 October 2026:
+
+    Bun 1.4.3
+    https://bun.sh/
+    https://bun.sh/blog/bun-v1.4.3
+
+    Next.js 16.4
+    https://nextjs.org/blog
+
+    Hono 4.13.13
+    https://www.npmjs.com/package/hono
+
+    Zod 4.6.7
+    https://www.npmjs.com/package/zod
+
+    Rust 1.99.1
+    https://blog.rust-lang.org/2026/10/15/Rust-1.99.1/
+
+Protocol references must be rechecked and pinned by revision at implementation
+time because ZSA remains active development work.
+
+======================================================================
+END
+======================================================================

@@ -1,0 +1,51 @@
+[package]
+name = "horoi-claim"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+test-utils = []
+
+[dependencies]
+# Local source is QED-it/orchard cf801a5d6701bc128e21678ba0034564af4a2aca with the ZSA gadget fields exposed.
+blake2b_simd = "=1.0.1"
+ff = "=0.13.1"
+group = "=0.13.0"
+incrementalmerkletree = { version = "=0.8.2", features = ["legacy-api"] }
+halo2_gadgets = { git = "https://github.com/QED-it/halo2", rev = "ef3d0ba2e9a513658f8d3d00294ddebd92cc649e", default-features = false }
+halo2_proofs = { git = "https://github.com/QED-it/halo2", rev = "ef3d0ba2e9a513658f8d3d00294ddebd92cc649e", default-features = false, features = ["batch", "floor-planner-v1-legacy-pdqsort"] }
+orchard = { path = "vendor/orchard", default-features = false, features = ["circuit", "std", "unstable-voting-circuits", "zsa-issuance"] }
+pasta_curves = "=0.5.1"
+rand = "=0.8.8"
+halo2_poseidon = { git = "https://github.com/QED-it/halo2", rev = "ef3d0ba2e9a513658f8d3d00294ddebd92cc649e" }
+zcash_note_encryption = { git = "https://github.com/zcash/zcash_note_encryption", rev = "9f7e93d42cef839d02b9d75918117941d453f8cb" }
+serde_json = "=1.0.154"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+orchard = { path = "vendor/orchard", default-features = false, features = ["std", "zsa-issuance"] }
+zcash_primitives = { git = "https://github.com/QED-it/librustzcash", rev = "c5c232db9c54eeb8bc1d0f4dc1b8a0e40f981bb0", features = ["transparent-inputs", "non-standard-fees", "zsa-issuance", "zip-233"] }
+zcash_protocol = { git = "https://github.com/QED-it/librustzcash", rev = "c5c232db9c54eeb8bc1d0f4dc1b8a0e40f981bb0", default-features = false }
+
+[target.wasm32-unknown-unknown.dependencies]
+wasm-bindgen = "=0.2.129"
+getrandom = { version = "=0.2.17", features = ["js"] }
+
+[patch.crates-io]
+orchard = { path = "vendor/orchard" }
+sapling-crypto = { git = "https://github.com/QED-it/sapling-crypto", rev = "e785faaa5eaf67bd2cb328fdd82a345df44e5754" }
+zcash_note_encryption = { git = "https://github.com/zcash/zcash_note_encryption", rev = "9f7e93d42cef839d02b9d75918117941d453f8cb" }
+sinsemilla = { git = "https://github.com/zcash/sinsemilla", rev = "aabb707e862bc3d7b803c77d14e5a771bcee3e8c" }
+halo2_gadgets = { git = "https://github.com/QED-it/halo2", rev = "ef3d0ba2e9a513658f8d3d00294ddebd92cc649e" }
+halo2_proofs = { git = "https://github.com/QED-it/halo2", rev = "ef3d0ba2e9a513658f8d3d00294ddebd92cc649e" }
+zcash_spec = { git = "https://github.com/QED-it/zcash_spec", rev = "d5e84264d2ad0646b587a837f4e2424ca64d3a05" }
+
+[patch."https://github.com/QED-it/orchard"]
+orchard = { path = "vendor/orchard" }
+
+
+[package.metadata.horoi-upstream]
+qedit-orchard-revision = "cf801a5d6701bc128e21678ba0034564af4a2aca"

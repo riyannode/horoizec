@@ -1,92 +1,26 @@
 # Architecture
 
-## Components
+Horoi has five Next.js pages, a Bun/Hono API with SQLite, a Rust claim library shared with browser WASM, a native Rust verifier process, and a QEDIT Zebra RPC connection.
 
 ```mermaid
-flowchart TD
-  UI[frontend React/Vite] --> API[backend Elysia API]
-  CLI[backend/cli.ts] --> API
-  API --> ENG[engine.ts checks + report hash]
-  API --> DB[(bun:sqlite)]
-  API --> CHAIN[chain.ts viem BSC]
-  ENG --> AD[adapters.ts custody/erc4626/custom]
-  AD --> HV[HoroiVault integration harness]
-  AD --> ANVIL[Anvil fork 127.0.0.1]
-  CHAIN --> BSC[BSC mainnet eth_call]
-  ANVIL --> BSC
-  API --> BINANCE[backend/binance.ts signed RWA/Tx/Wallet context]
-  BINANCE --> WEB3[Binance Web3 API]
-  PUB[publish payload + simulation] --> REG[HoroiRegistry BSC mainnet]
+flowchart LR
+  Holder[Holder browser] -->|public claim and proof bundle| API[Hono API]
+  Holder -->|public chain ranges| API
+  Holder -->|local key, scan, witness, proof| WASM[Rust WASM]
+  API --> DB[(SQLite claims and consumed alternate nullifiers)]
+  API --> RPC[QEDIT Zebra JSON-RPC]
+  API --> Verifier[Native Rust verifier]
+  Verifier --> Core[Rust ClaimVerifier]
 ```
 
-## Trust boundaries
+## Proof flow
 
-| Zone | Privilege |
-|------|-----------|
-| BSC mainnet | read-only (`eth_call` / view) |
-| Anvil fork | mutable local state only; never broadcast |
-| API server | no publisher key; no custody |
-| Publisher wallet | signs `publish` on mainnet externally |
-| Registry | no external calls; no token transfers |
+A creator sends public name, description, ZIP 227 AssetId bytes, threshold, snapshot height, and optional expiry. The backend validates the AssetId, reads the Orchard commitment root and canonical public Orchard nullifiers from the selected chain history, derives the exclusion root, then stores immutable claim metadata including network identity and a random creator nonce.
 
-## Run state machine
+A holder provides a test-only spending key in the claim page. The browser fetches public action ranges and public issuance fields. WASM reconstructs issuance notes, checks commitments, decrypts candidate outputs, computes commitment and exclusion witnesses, and creates a one-note proof locally. The browser submits the proof bundle and circuit-derived alternate nullifier. It does not send the key, viewing key, decrypted notes, witness, exact balance, or queried holder nullifier.
 
-```
-CREATED → INSPECTING → FORKING → BASELINE → SCENARIOS
-→ EVALUATING → HASHING → PASS | FAIL | INCOMPLETE
-Infrastructure failure → ERROR
-```
+The API loads the stored claim, passes the bundle to the native Rust verifier, checks the alternate nullifier against the circuit result, re-resolves both snapshot roots against the active chain, then atomically consumes the alternate nullifier under the claim ID. The same contributing note is rejected again within that claim domain. Different claim domains produce different alternate nullifiers under the implemented relation.
 
-Terminal statuses are immutable. Rerun creates a new `runId`.
+## Boundaries and limitations
 
-## Deterministic hashing
-
-- `suiteHash = keccak256(canonical JSON of suite manifest)`
-- `resultHash = keccak256(canonical semantic report payload)` with checks sorted by ID and evidence bound; runtime `runId`/`testedAt`/duration and Binance context are excluded
-- `contextHash = keccak256(canonical normalized Binance observation)`; price, market status, observation time, and call latency stay outside `resultHash`
-- Registry `reportId = keccak256(abi.encode(chainid, asset, target, suiteHash, resultHash, blockNumber))`
-- Suite `HOROI-BSTOCK-1@1.2.0` binds the observed effective claim from the adapter boundary; this semantic change intentionally bumped the suite version/hash.
-
-## Fork policy
-
-1. Resolve/pin BSC block; store number + hash + RPC host class (no secrets).
-2. Start Anvil fork.
-3. Inspect interfaces; baseline adapter actions.
-4. Discover authorized multiplier updater from `owner()`, enumerable `DEFAULT_ADMIN_ROLE`, or recent `UIMultiplierUpdated` transaction sender, then impersonate only on the local fork.
-5. Fund isolated test users from an actual holder on the fork (optional explicit holder override). No storage mutation is used.
-6. Each forward split, reverse split, and dividend scenario runs from an independent snapshot.
-7. If transition cannot be reproduced → required checks `INCOMPLETE` (`FORK_MUTATION_UNAVAILABLE`).
-8. **No `anvil_setStorageAt` / `vm.store` manufacturing of PASS.**
-9. Tear down fork; persist report.
-
-## Integration harness
-
-`backend/HoroiVault.sol` is a minimal single-asset ERC-4626-shaped harness. It stores
-raw bStock amounts as the canonical accounting unit, tracks proportional shares for
-multiple users, and supports deposit/redeem/withdraw. It has no multiplier mutation,
-fees, trading, governance, arbitrary calls, or upgradeability.
-
-`backend/tests/NaiveHoroiVault.sol` is deliberately labeled `TEST/INCOMPATIBLE`. It
-keeps the same basic deposit/redeem mechanics but snapshots effective units, allowing
-the engine to demonstrate a deterministic `INVARIANT_MULTIPLIER_IGNORED` failure. Neither
-contract is presented as an external production protocol.
-
-## Publication simulation
-
-The exact registry calldata is generated from the report arguments and wrapped for the
-official Binance Transaction API simulation request as:
-
-```json
-{
-  "binanceChainId": "56",
-  "evmTx": { "from": "0x...", "to": "0x...", "value": "0", "data": "0x..." }
-}
-```
-
-The canonical publication payload identity includes `chainId`, `from`, `to`, `value`,
-and `data`. Any change invalidates prior simulation evidence. No registry address is
-invented in this PR; live simulation remains blocked until HoroiRegistry is deployed.
-
-## Registry
-
-Immutable summary anchor. Test evolution = new suiteHash, not proxy upgrades.
+Rust owns canonical encoding, AssetId and AssetBase handling, claim/domain derivation, circuit, proof serialization, and verification. TypeScript validates HTTP shapes and stores public metadata; it does not implement cryptographic rules. SQLite stores public claims and accepted alternate nullifiers, not proof bodies. The proof handles one normal note, with no split-note or four-note aggregation. The exclusion tree and alternate-nullifier design are experimental and unaudited. Local QEDIT Zebra regtest E2E passed; public testnet E2E remains unverified.
