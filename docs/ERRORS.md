@@ -4,7 +4,7 @@ HTTP errors use { "error": { "code": "...", "message": "...", "requestId": "..."
 
 | Code | HTTP | Cause and safe retry behavior | User-facing message | Operator action |
 | --- | --- | --- | --- | --- |
-| BAD_REQUEST | 400 | JSON or fields do not match schema; correct the request. | The request is invalid. | Inspect route and status metadata; do not log the body. |
+| BAD_REQUEST | 400 | JSON is malformed or fields do not match schema; correct the request. | The request is invalid. | Inspect route and status metadata; do not log the body. |
 | INVALID_ASSET_ID | 400 | AssetId encoding is invalid; correct it. | The AssetId is invalid. | Check encoding. |
 | INVALID_THRESHOLD | 400 | Threshold is not a positive u64 decimal; correct it. | The threshold must be a positive integer. | Check submitted value. |
 | INVALID_SNAPSHOT | 400 | Height or range is invalid or beyond tip; correct it. | The snapshot height is invalid. | Check request and node height. |
@@ -20,5 +20,8 @@ HTTP errors use { "error": { "code": "...", "message": "...", "requestId": "..."
 | SNAPSHOT_UNAVAILABLE | 503 | RPC returned inconsistent roots or canonical history; retry after node/index recovery. | The requested snapshot is unavailable. | Check RPC, block decoding, and chain continuity. |
 | ZCASH_RPC_UNAVAILABLE | 503 | Configured node could not be read; retry after recovery. | The configured Zcash node is unavailable. | Check endpoint and RPC credentials. |
 | VERIFIER_UNAVAILABLE | 503 | Native Rust verifier process is unavailable; retry after recovery. | The local Rust verifier is unavailable. | Check binary path and process startup. |
+| INTERNAL_ERROR | 500 | An unexpected server error occurred; retry only after recovery. | An internal error occurred. | Inspect server health and logs using the request ID; do not log request bodies or private data. |
 
-No raw cryptographic stack trace or private wallet material is returned in HTTP errors or normal logs. Unknown internal errors currently map to BAD_REQUEST; this is a known limitation of the current centralized error mapper.
+`VERIFIER_UNAVAILABLE` is the existing HTTP code for the backend's native Rust verifier bridge. The PRD's `PROVER_UNAVAILABLE` refers to browser-local WASM proving; that failure is displayed in the browser and does not produce an HTTP response. The API code remains unchanged.
+
+No raw cryptographic stack trace or private wallet material is returned in HTTP errors or normal logs. Unknown server errors map to `INTERNAL_ERROR` (500); the response contains no internal exception details.

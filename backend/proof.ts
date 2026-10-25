@@ -28,10 +28,14 @@ class Verifier {
   }
   request(value: Record<string, unknown>): Promise<VerifierResponse> {
     const run = this.queue.then(async () => {
-      this.start();
-      this.process!.stdin.write(`${JSON.stringify(value)}\n`);
-      await this.process!.stdin.flush();
-      return JSON.parse(await this.line()) as VerifierResponse;
+      try {
+        this.start();
+        this.process!.stdin.write(`${JSON.stringify(value)}\n`);
+        await this.process!.stdin.flush();
+        return JSON.parse(await this.line()) as VerifierResponse;
+      } catch {
+        throw new Error("VERIFIER_UNAVAILABLE");
+      }
     });
     this.queue = run.then(() => undefined, () => undefined);
     return run;

@@ -65,6 +65,7 @@ const ZSA_COMPACT_NOTE_CIPHERTEXT_BYTES = 84;
 const VANILLA_NOTE_CIPHERTEXT_BYTES = 580;
 const ZSA_NOTE_CIPHERTEXT_BYTES = 612;
 const QEDIT_REGTEST_GENESIS_HASH = "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327";
+const QEDIT_ZSA_TESTNET_GENESIS_HASH = "f41f61ddf9610ae40f519ad2e9e543e065ef0357eeecf5a4cc08a765d9505756";
 
 async function requireConfiguredNetwork(chain: ChainInfo): Promise<void> {
   if (chain.chain === "main" || chain.chain === "mainnet") throw new Error("MAINNET_DISABLED");
@@ -72,7 +73,7 @@ async function requireConfiguredNetwork(chain: ChainInfo): Promise<void> {
   const isTestChain = chain.chain === "test" || chain.chain === "testnet";
   const matchesNetwork = config.NETWORK_ID === "zebra-regtest"
     ? isTestChain && genesisHash === QEDIT_REGTEST_GENESIS_HASH
-    : isTestChain && genesisHash !== QEDIT_REGTEST_GENESIS_HASH;
+    : isTestChain && genesisHash === QEDIT_ZSA_TESTNET_GENESIS_HASH;
   if (!matchesNetwork) throw new Error("NETWORK_MISMATCH");
   const zsaUpgradeActive = Object.values(chain.upgrades ?? []).some(
     (upgrade) => upgrade.name === "NU7" && upgrade.status === "active",
@@ -97,12 +98,18 @@ export async function getPublicActionBlocks(snapshotHeight: number, start: numbe
     || typeof canonicalEndHash !== "string" || !/^[0-9a-f]{64}$/i.test(canonicalEndHash)) {
     throw new Error("SNAPSHOT_UNAVAILABLE");
   }
+  const heights = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  const blockHashes = await Promise.all(heights.map((height) => rpc("getblockhash", [height])));
+  if (blockHashes.some((hash) => typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash))) {
+    throw new Error("SNAPSHOT_UNAVAILABLE");
+  }
+  const decodedBlocks = await Promise.all(blockHashes.map((hash) => rpc("getblock", [hash, 2])));
   const blocks: PublicActionBlock[] = [];
   let previousHash: string | undefined;
-  for (let height = start; height <= end; height++) {
-    const blockHash = await rpc("getblockhash", [height]);
-    if (typeof blockHash !== "string" || !/^[0-9a-f]{64}$/i.test(blockHash)) throw new Error("SNAPSHOT_UNAVAILABLE");
-    const block = await rpc("getblock", [blockHash, 2]) as DecodedBlock;
+  for (let index = 0; index < heights.length; index++) {
+    const height = heights[index]!;
+    const blockHash = blockHashes[index] as string;
+    const block = decodedBlocks[index]! as DecodedBlock;
     if (block.height !== height || block.hash?.toLowerCase() !== blockHash.toLowerCase() || !Array.isArray(block.tx)) {
       throw new Error("SNAPSHOT_UNAVAILABLE");
     }

@@ -33,8 +33,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 export async function publicActionBlocks(snapshotHeight: number, start: number, end: number): Promise<PublicActionBlock[]> {
-  const { blocks } = await api<{ blocks: PublicActionBlock[] }>(
-    `/snapshots/${snapshotHeight}/actions?start=${start}&end=${end}`,
-  );
-  return blocks;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const { blocks } = await api<{ blocks: PublicActionBlock[] }>(
+        `/snapshots/${snapshotHeight}/actions?start=${start}&end=${end}`,
+      );
+      return blocks;
+    } catch (error) {
+      if (!(error instanceof TypeError || error instanceof SyntaxError) || attempt === 7) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * Math.min(2 ** attempt, 8)));
+    }
+  }
+  throw new Error("The public chain data request failed.");
 }

@@ -2,6 +2,8 @@
 
 Base path: /api/v1. JSON uses decimal strings for thresholds and hexadecimal strings for field and identifier values. Errors use the envelope documented in [ERRORS.md](ERRORS.md). Routes fail closed on inconsistent chain state and do not log request bodies.
 
+Unexpected server failures use `INTERNAL_ERROR` (500). Native verifier bridge failures retain the existing `VERIFIER_UNAVAILABLE` (503) API code.
+
 ## GET /health
 
 Request: no body or query.

@@ -26,7 +26,8 @@ const messages: Record<string, string> = {
   INVALID_SNAPSHOT: "The snapshot height is invalid.",
   MAINNET_DISABLED: "Mainnet is disabled for this prototype.",
   NETWORK_MISMATCH: "The configured node is not the selected testnet or regtest network.",
-  ZSA_UNSUPPORTED: "The configured chain has not activated OrchardZSA support."
+  ZSA_UNSUPPORTED: "The configured chain has not activated OrchardZSA support.",
+  INTERNAL_ERROR: "An internal error occurred."
 };
 app.use("*", cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"], allowMethods: ["GET", "POST"], allowHeaders: ["content-type"] }));
 app.use("/api/v1/*", bodyLimit({ maxSize: 2 * 1024 * 1024 }));
@@ -38,8 +39,8 @@ app.use("*", async (c, next) => {
   console.info(JSON.stringify({ requestId, route: c.req.path, status: c.res.status, durationMs: Math.round(performance.now() - start) }));
 });
 app.onError((error, c) => {
-  const code = error.message in messages ? error.message : "BAD_REQUEST";
-  const status = code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" ? 403 : code.endsWith("_UNAVAILABLE") ? 503 : 400;
+  const code = Object.hasOwn(messages, error.message) ? error.message : "INTERNAL_ERROR";
+  const status = code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" ? 403 : code.endsWith("_UNAVAILABLE") ? 503 : 400;
   return c.json({ error: { code, message: messages[code] ?? messages.BAD_REQUEST, requestId: c.get("requestId") } }, status);
 });
 
@@ -49,6 +50,14 @@ async function assertActiveSnapshot(claim: NonNullable<ReturnType<typeof getClai
   const snapshot = await resolveSnapshot(claim.snapshotHeight);
   if (snapshot.commitmentRoot.toLowerCase() !== claim.commitmentRoot.toLowerCase() || snapshot.exclusionRoot.toLowerCase() !== claim.exclusionRoot.toLowerCase()) {
     throw new Error("SNAPSHOT_STALE");
+  }
+}
+async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
+  try {
+    return await c.req.json();
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("BAD_REQUEST");
+    throw error;
   }
 }
 app.get("/api/v1/claims", (c) => {
@@ -69,7 +78,7 @@ app.get("/api/v1/claims/:id", (c) => {
   return c.json({ claim });
 });
 app.post("/api/v1/claims", async (c) => {
-  const parsed = createClaimSchema.safeParse(await c.req.json());
+  const parsed = createClaimSchema.safeParse(await parseJsonBody(c));
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path[0];
     throw new Error(field === "assetId" ? "INVALID_ASSET_ID" : field === "threshold" ? "INVALID_THRESHOLD" : field === "snapshotHeight" ? "INVALID_SNAPSHOT" : "BAD_REQUEST");
@@ -96,7 +105,7 @@ app.post("/api/v1/claims", async (c) => {
   return c.json({ claim }, 201);
 });
 app.post("/api/v1/proofs/verify", async (c) => {
-  const parsed = verifySchema.safeParse(await c.req.json());
+  const parsed = verifySchema.safeParse(await parseJsonBody(c));
   if (!parsed.success) throw new Error("BAD_REQUEST");
   const input = parsed.data;
   const claim = getClaim(input.claimId);
@@ -130,7 +139,7 @@ app.post("/api/v1/claims/:id/submit", async (c) => {
   const claim = getClaim(c.req.param("id"));
   if (!claim) throw new Error("CLAIM_NOT_FOUND");
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
-  const parsed = verifySchema.safeParse(await c.req.json());
+  const parsed = verifySchema.safeParse(await parseJsonBody(c));
   if (!parsed.success) throw new Error("BAD_REQUEST");
   if (parsed.data.claimId !== claim.id || parsed.data.protocolVersion !== claim.protocolVersion) throw new Error("PROOF_INPUT_MISMATCH");
   const result = await verifyProof({
