@@ -10,13 +10,35 @@ Request: no body or query.
 
 Response 200: { "ok": true, "version": "1.0.0", "network": "zebra-regtest" }.
 
-## GET /claims?limit=&cursor=
+## Docker Judge Demo routes
 
-Request: optional limit (default 20, clamped to 1..100) and optional cursor (claim ID).
+These routes exist only when `HOROI_DEMO_MODE=true`. They use the pinned `judge-hcp1` fixture and the same native Rust verifier as regular proof verification. No private key, witness, or proof bytes are returned by the fixture endpoint.
+
+### GET /demo/fixture
+
+Response 200: public fixture provenance, claim ID, network/protocol identifiers, AssetId, threshold, snapshot height and roots, and the claim-specific alternate nullifier.
+
+### POST /demo/verify
+
+Request JSON: `{ "scenario": "valid" | "tampered" }`. For `valid`, the backend must receive `valid=true` and the fixture's actual alternate nullifier from Rust or returns a service error. For `tampered`, the backend flips a proof byte; `valid:false` is returned only if Rust rejects it with `INVALID_PROOF`. The proof itself never comes from the browser.
+
+Errors: BAD_REQUEST (400), DEMO_FIXTURE_INVALID (503), DEMO_TAMPER_CHECK_FAILED (503), RATE_LIMITED (429).
+
+### POST /demo/submit
+
+Request JSON: `{ "fixtureId": "judge-hcp1" }`. The backend verifies the pinned proof and passes its derived alternate nullifier to the same SQLite atomic-consumption path used by `POST /claims/:id/submit`.
+
+Response 201: `{ "accepted": true, "replayProtection": "note-level", "alternateNullifier": string }` for first use. Repeating the same request returns HTTP 409 `NULLIFIER_USED` after HCP1 verification. Verification/submission requests share a 12-request-per-minute in-memory limit in demo mode.
+
+Demo mode also returns DEMO_READ_ONLY (403) for claim creation and public action-range fetching. These safeguards prevent cold public-chain scanning in Docker.
+
+## GET /claims?limit=&cursor=&status=
+
+Request: optional limit (default 20, clamped to 1..100), cursor (claim ID), and status (`active` or `expired`). Status is computed at request time and filtered before descending-ID cursor pagination. An unsupported status returns `BAD_REQUEST` (400); non-numeric limit falls back to 20.
 
 Response 200: { "claims": [Claim] }. Claim fields: id, protocolVersion, networkId, name, description, assetId, threshold, snapshotHeight, commitmentRoot, exclusionRoot, claimDomain, creatorNonce, expiresAt, createdAt, and computed status (active or expired).
 
-Errors: none for malformed pagination; non-numeric limit falls back to 20.
+Errors: BAD_REQUEST (400) for unsupported status. Malformed pagination does not error; non-numeric limit falls back to 20.
 
 ## GET /claims/:id
 

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { config } from "./config";
 import type { CreateClaimInput } from "./schema";
 export interface ClaimRecord {
@@ -9,6 +9,7 @@ export interface ClaimRecord {
   status: "active" | "expired";
 }
 export const db = new Database(config.DATABASE_PATH, { create: true });
+if (config.DATABASE_PATH !== ":memory:") chmodSync(config.DATABASE_PATH, 0o640);
 db.exec("PRAGMA foreign_keys = ON");
 db.exec(readFileSync(new URL("./migrations/001_init.sql", import.meta.url), "utf8"));
 const columns = `id, protocol_version AS protocolVersion, network_id AS networkId, name, description,
@@ -17,10 +18,19 @@ const columns = `id, protocol_version AS protocolVersion, network_id AS networkI
   expires_at AS expiresAt, created_at AS createdAt,
   CASE WHEN expires_at IS NOT NULL AND expires_at <= CAST(strftime('%s', 'now') AS INTEGER)
     THEN 'expired' ELSE 'active' END AS status`;
-export function listClaims(limit: number, cursor?: string): ClaimRecord[] {
-  const rows = cursor
-    ? db.query(`SELECT ${columns} FROM claims WHERE id < ? ORDER BY id DESC LIMIT ?`).all(cursor, limit)
-    : db.query(`SELECT ${columns} FROM claims ORDER BY id DESC LIMIT ?`).all(limit);
+export function listClaims(limit: number, cursor?: string, status?: ClaimRecord["status"]): ClaimRecord[] {
+  const filters: string[] = [];
+  const bindings: Array<string | number> = [];
+  if (cursor) {
+    filters.push("id < ?");
+    bindings.push(cursor);
+  }
+  if (status) {
+    filters.push("CASE WHEN expires_at IS NOT NULL AND expires_at <= CAST(strftime('%s', 'now') AS INTEGER) THEN 'expired' ELSE 'active' END = ?");
+    bindings.push(status);
+  }
+  const where = filters.length ? ` WHERE ${filters.join(" AND ")}` : "";
+  const rows = db.query(`SELECT ${columns} FROM claims${where} ORDER BY id DESC LIMIT ?`).all(...bindings, limit);
   return rows as ClaimRecord[];
 }
 export function getClaim(id: string): ClaimRecord | null {
@@ -39,6 +49,31 @@ export function saveClaim(input: CreateClaimInput, s: {
   const saved = getClaim(s.id);
   if (!saved) throw new Error("CLAIM_INSERT_FAILED");
   return saved;
+}
+
+export function ensureDemoClaim(s: {
+  id: string; networkId: string; assetId: string; threshold: string; snapshotHeight: number;
+  commitmentRoot: string; exclusionRoot: string; claimDomain: string; creatorNonce: string; expiresAt: number | null;
+}): ClaimRecord {
+  const existing = getClaim(s.id);
+  if (existing) {
+    if (existing.networkId !== s.networkId || existing.assetId !== s.assetId
+      || existing.threshold !== s.threshold || existing.snapshotHeight !== s.snapshotHeight
+      || existing.commitmentRoot !== s.commitmentRoot || existing.exclusionRoot !== s.exclusionRoot
+      || existing.claimDomain !== s.claimDomain || existing.creatorNonce !== s.creatorNonce
+      || existing.expiresAt !== s.expiresAt) {
+      throw new Error("DEMO_FIXTURE_INVALID");
+    }
+    return existing;
+  }
+  return saveClaim({
+    name: "Horoi Docker Judge Fixture",
+    description: "LOCAL SYNTHETIC TEST FIXTURE; no live chain scan.",
+    assetId: s.assetId,
+    threshold: s.threshold,
+    snapshotHeight: s.snapshotHeight,
+    expiresAt: s.expiresAt,
+  }, s, 0);
 }
 
 export function consumeNullifier(claimId: string, nullifier: string): boolean {

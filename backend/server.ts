@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { randomUUID } from "node:crypto";
@@ -7,6 +7,8 @@ import { consumeNullifier, getClaim, listClaims, saveClaim } from "./db";
 import { createClaimSchema, verifySchema } from "./schema";
 import { deriveClaim, validateAssetId, verifyProof } from "./proof";
 import { getPublicActionBlocks, resolveSnapshot } from "./zcash";
+import { getDemoClaim, getDemoFixtureNullifier, getDemoOverview, getDemoProofBundle, initializeDemoFixture, isDemoClaim, pinnedDemoStatementMatches, verifyDemoProof } from "./demo";
+import { z } from "zod";
 
 type Variables = { requestId: string };
 const app = new Hono<{ Variables: Variables }>();
@@ -25,12 +27,16 @@ const messages: Record<string, string> = {
   INVALID_THRESHOLD: "The threshold must be a positive integer.",
   INVALID_SNAPSHOT: "The snapshot height is invalid.",
   MAINNET_DISABLED: "Mainnet is disabled for this prototype.",
+  DEMO_READ_ONLY: "Docker demo mode exposes only its pinned claim fixture.",
+  DEMO_FIXTURE_INVALID: "The pinned HCP1 fixture failed native verification.",
+  DEMO_TAMPER_CHECK_FAILED: "The native verifier did not reject the tampered fixture as expected.",
   NETWORK_MISMATCH: "The configured node is not the selected testnet or regtest network.",
   ZSA_UNSUPPORTED: "The configured chain has not activated OrchardZSA support.",
   INTERNAL_ERROR: "An internal error occurred."
 };
 app.use("*", cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"], allowMethods: ["GET", "POST"], allowHeaders: ["content-type"] }));
 app.use("/api/v1/*", bodyLimit({ maxSize: 2 * 1024 * 1024 }));
+app.use("/api/v1/demo/*", bodyLimit({ maxSize: 16 * 1024 }));
 app.use("*", async (c, next) => {
   const requestId = randomUUID();
   c.set("requestId", requestId);
@@ -40,17 +46,51 @@ app.use("*", async (c, next) => {
 });
 app.onError((error, c) => {
   const code = Object.hasOwn(messages, error.message) ? error.message : "INTERNAL_ERROR";
-  const status = code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" ? 403 : code.endsWith("_UNAVAILABLE") ? 503 : 400;
+  const status = code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" ? 503 : 400;
   return c.json({ error: { code, message: messages[code] ?? messages.BAD_REQUEST, requestId: c.get("requestId") } }, status);
 });
 
 app.get("/api/v1/health", (c) => c.json({ ok: true, version: "1.0.0", network: config.NETWORK_ID }));
+let cryptoWindowStartedAt = 0;
+let cryptoRequests = 0;
+async function limitDemoCrypto(c: Context<{ Variables: Variables }>, next: Next) {
+  if (config.HOROI_DEMO_MODE) {
+    if (Date.now() - cryptoWindowStartedAt >= 60_000) { cryptoWindowStartedAt = Date.now(); cryptoRequests = 0; }
+    if (cryptoRequests >= 12) return c.json({ error: { code: "RATE_LIMITED", message: "The demo verifier is busy. Try again shortly.", requestId: c.get("requestId") } }, 429);
+    cryptoRequests++;
+  }
+  await next();
+}
+app.use("/api/v1/proofs/verify", limitDemoCrypto);
+app.use("/api/v1/claims/:id/submit", limitDemoCrypto);
+app.use("/api/v1/demo/verify", limitDemoCrypto);
+app.use("/api/v1/demo/submit", limitDemoCrypto);
 async function assertActiveSnapshot(claim: NonNullable<ReturnType<typeof getClaim>>) {
+  if (config.HOROI_DEMO_MODE) {
+    if (!pinnedDemoStatementMatches(claim)) throw new Error("SNAPSHOT_STALE");
+    return;
+  }
   if (claim.networkId !== config.NETWORK_ID) throw new Error("SNAPSHOT_STALE");
   const snapshot = await resolveSnapshot(claim.snapshotHeight);
   if (snapshot.commitmentRoot.toLowerCase() !== claim.commitmentRoot.toLowerCase() || snapshot.exclusionRoot.toLowerCase() !== claim.exclusionRoot.toLowerCase()) {
     throw new Error("SNAPSHOT_STALE");
   }
+}
+async function acceptProof(claim: NonNullable<ReturnType<typeof getClaim>>, input: ReturnType<typeof verifySchema.parse>) {
+  const result = await verifyProof({
+    networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
+    snapshotHeight: claim.snapshotHeight, commitmentRoot: claim.commitmentRoot,
+    exclusionRoot: claim.exclusionRoot, expiresAt: claim.expiresAt, creatorNonce: claim.creatorNonce
+  }, Buffer.from(input.proof, "base64").toString("hex"));
+  if (!result.valid) throw new Error("PROOF_INVALID");
+  const submittedNullifier = input.alternateNullifiers[0];
+  if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
+    throw new Error("PROOF_INPUT_MISMATCH");
+  }
+  await assertActiveSnapshot(claim);
+  if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
+  if (!consumeNullifier(claim.id, result.alternateNullifier)) throw new Error("NULLIFIER_USED");
+  return result.alternateNullifier;
 }
 async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
   try {
@@ -63,9 +103,13 @@ async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Prom
 app.get("/api/v1/claims", (c) => {
   const parsed = Number(c.req.query("limit") ?? 20);
   const limit = Number.isFinite(parsed) ? Math.max(1, Math.min(100, Math.trunc(parsed))) : 20;
-  return c.json({ claims: listClaims(limit, c.req.query("cursor")) });
+  const status = c.req.query("status");
+  if (status !== undefined && status !== "active" && status !== "expired") throw new Error("BAD_REQUEST");
+  const claims = listClaims(limit, c.req.query("cursor"), status);
+  return c.json({ claims: config.HOROI_DEMO_MODE ? claims.filter((claim) => isDemoClaim(claim.id)) : claims });
 });
 app.get("/api/v1/snapshots/:height/actions", async (c) => {
+  if (config.HOROI_DEMO_MODE) throw new Error("DEMO_READ_ONLY");
   const snapshotHeight = Number(c.req.param("height"));
   const start = Number(c.req.query("start"));
   const end = Number(c.req.query("end"));
@@ -74,10 +118,11 @@ app.get("/api/v1/snapshots/:height/actions", async (c) => {
 });
 app.get("/api/v1/claims/:id", (c) => {
   const claim = getClaim(c.req.param("id"));
-  if (!claim) throw new Error("CLAIM_NOT_FOUND");
+  if (!claim || (config.HOROI_DEMO_MODE && !isDemoClaim(claim.id))) throw new Error("CLAIM_NOT_FOUND");
   return c.json({ claim });
 });
 app.post("/api/v1/claims", async (c) => {
+  if (config.HOROI_DEMO_MODE) throw new Error("DEMO_READ_ONLY");
   const parsed = createClaimSchema.safeParse(await parseJsonBody(c));
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path[0];
@@ -109,7 +154,7 @@ app.post("/api/v1/proofs/verify", async (c) => {
   if (!parsed.success) throw new Error("BAD_REQUEST");
   const input = parsed.data;
   const claim = getClaim(input.claimId);
-  if (!claim) throw new Error("CLAIM_NOT_FOUND");
+  if (!claim || (config.HOROI_DEMO_MODE && !isDemoClaim(claim.id))) throw new Error("CLAIM_NOT_FOUND");
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
   const result = await verifyProof({
     networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
@@ -137,24 +182,38 @@ app.post("/api/v1/proofs/verify", async (c) => {
 });
 app.post("/api/v1/claims/:id/submit", async (c) => {
   const claim = getClaim(c.req.param("id"));
-  if (!claim) throw new Error("CLAIM_NOT_FOUND");
+  if (!claim || (config.HOROI_DEMO_MODE && !isDemoClaim(claim.id))) throw new Error("CLAIM_NOT_FOUND");
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
   const parsed = verifySchema.safeParse(await parseJsonBody(c));
   if (!parsed.success) throw new Error("BAD_REQUEST");
   if (parsed.data.claimId !== claim.id || parsed.data.protocolVersion !== claim.protocolVersion) throw new Error("PROOF_INPUT_MISMATCH");
-  const result = await verifyProof({
-    networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
-    snapshotHeight: claim.snapshotHeight, commitmentRoot: claim.commitmentRoot,
-    exclusionRoot: claim.exclusionRoot, expiresAt: claim.expiresAt, creatorNonce: claim.creatorNonce
-  }, Buffer.from(parsed.data.proof, "base64").toString("hex"));
-  if (!result.valid) throw new Error("PROOF_INVALID");
-  const submittedNullifier = parsed.data.alternateNullifiers[0];
-  if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
-    throw new Error("PROOF_INPUT_MISMATCH");
-  }
-  await assertActiveSnapshot(claim);
-  if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
-  if (!consumeNullifier(claim.id, result.alternateNullifier)) throw new Error("NULLIFIER_USED");
+  await acceptProof(claim, parsed.data);
   return c.json({ accepted: true, replayProtection: "note-level" });
 });
+
+app.get("/api/v1/demo/fixture", (c) => {
+  if (!config.HOROI_DEMO_MODE) return c.notFound();
+  return c.json(getDemoOverview());
+});
+app.post("/api/v1/demo/verify", async (c) => {
+  if (!config.HOROI_DEMO_MODE) return c.notFound();
+  const body = z.object({ scenario: z.enum(["valid", "tampered"]) }).strict().safeParse(await parseJsonBody(c));
+  if (!body.success) throw new Error("BAD_REQUEST");
+  return c.json(await verifyDemoProof(body.data.scenario === "tampered"));
+});
+app.post("/api/v1/demo/submit", async (c) => {
+  if (!config.HOROI_DEMO_MODE) return c.notFound();
+  const body = z.object({ fixtureId: z.literal("judge-hcp1") }).strict().safeParse(await parseJsonBody(c));
+  if (!body.success) throw new Error("BAD_REQUEST");
+  const claim = getDemoClaim();
+  const acceptedNullifier = await acceptProof(claim, {
+    claimId: claim.id,
+    protocolVersion: 1,
+    proof: getDemoProofBundle(),
+    alternateNullifiers: [getDemoFixtureNullifier()],
+  });
+  return c.json({ accepted: true, replayProtection: "note-level", alternateNullifier: acceptedNullifier }, 201);
+});
+
+await initializeDemoFixture();
 export default { hostname: config.HOST, port: config.PORT, fetch: app.fetch };

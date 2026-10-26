@@ -1,19 +1,27 @@
 # Testing and validation
 
-All Horoi commands run in WSL/Linux. Cryptographic invariants stay in the single Rust integration test file. PRD §20 keeps Bun API/UI suites out of the default testing policy; `backend/server.test.ts` is a narrow exception for the malformed-JSON regression explicitly required by this hardening task. Frontend behavior uses typecheck, production builds, and manual ChatGPT Browser E2E; the repository does not carry a Playwright/Cypress/Vitest frontend suite.
+All Horoi commands run in WSL/Linux. Rust owns cryptographic invariants. Backend API tests cover status-filter pagination, malformed JSON, and the Docker fixture valid/tampered/replay paths. Frontend behavior uses typecheck, production builds, and manual browser validation; the repository does not carry a Playwright/Cypress/Vitest frontend suite.
 
 ## Commands
 
 From the repository root:
 
 ```sh
-(cd backend && bun install --frozen-lockfile && bun run check && bun run build)
-(cd backend && bun test server.test.ts)
+(cd backend/rust && cargo +1.99.1 build --locked --release --bin horoi-verifier)
+(cd backend && bun install --frozen-lockfile && bun run check && bun test --parallel=1 && bun run build)
 (cd frontend && bun install --frozen-lockfile && bun run check && bun run build)
 (cd backend/rust && cargo +1.99.1 fmt --check)
 (cd backend/rust && cargo +1.99.1 check --locked --all-targets)
-(cd backend/rust && cargo +1.99.1 test --locked --features test-utils --test claim)
+(cd backend/rust && cargo +1.99.1 test --locked --features test-utils --all-targets)
+docker compose config --quiet
+docker compose build
+docker compose up -d
+docker compose ps
+curl --fail http://localhost:3000/demo
+docker compose down -v --remove-orphans
 ```
+
+For the HTTP/browser acceptance, open `/demo` in a browser, verify that the valid fixture returns `valid: true`, the tampered fixture returns `INVALID_PROOF`, and the replay sequence returns HTTP 201 followed by HTTP 409 `NULLIFIER_USED`. Check that backend is healthy before frontend, only frontend publishes a port, and no public RPC request or snapshot scan occurs. Repeat after `down -v`; this reset removes only `horoi-judge` resources. The actual Docker results for this checkout are recorded in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
 
 The browser WASM build also needs wasm32-unknown-unknown, wasm-bindgen-cli 0.2.129, and Clang 18; see [SETUP.md](SETUP.md).
 

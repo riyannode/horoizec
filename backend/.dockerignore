@@ -1,0 +1,12 @@
+node_modules
+dist
+rust/target
+rust/work
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+*.log
+.git
+.DS_Store

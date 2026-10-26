@@ -1,5 +1,19 @@
 # Setup and dependency proof
 
+## Docker Judge Quickstart
+
+Requirements: Linux-capable Docker Engine and Docker Compose v2. From a fresh checkout:
+
+```bash
+git clone https://github.com/riyannode/horoizec.git
+cd horoizec
+docker compose up --build
+```
+
+Then open [http://localhost:3000/demo](http://localhost:3000/demo). This is the zero-credential judge mode: no `.env`, wallet, QEDIT RPC, public scan, payment, or transaction. The build uses pinned Rust 1.99.1 and Bun 1.4.3 base images plus `Cargo.lock` and each Bun lockfile. It builds the native verifier and Next.js production server from source; it does not use prebuilt WSL artifacts. Docker's x86_64/Linux build path was exercised in this task; arm64 is not yet acceptance-tested.
+
+The first startup derives and verifies the pinned HCP1 fixture with Rust before backend health is declared. SQLite persists in the `horoi-judge_horoi_data` volume. To reset only the judge project and its replay state, use `docker compose down -v --remove-orphans`. See [DEMO.md](DEMO.md) for scenario and provenance details and [DEPLOYMENT.md](DEPLOYMENT.md) for the isolated public-Docker profile.
+
 ## Environment
 
 Implementation and source validation ran in WSL2 on Ubuntu 24.04. The repository is /home/acer/projects/horoi.
@@ -61,7 +75,7 @@ The following were successfully completed from Linux source checkouts:
 
 The task-owned regtest process was stopped after the proof. The transaction and wallet state were local and ephemeral. This does not establish a public testnet or mainnet ZSA integration.
 
-Build prerequisites missing from the base WSL image were extracted into /tmp for those checks. The successful commands depended on that task-local environment setup and are not yet a project build recipe.
+For a clean setup, use the pinned tool versions and commands in this section. The repository includes independent `backend/bun.lock` and `frontend/bun.lock` files plus `backend/rust/Cargo.lock`; install Bun dependencies with `bun install --frozen-lockfile` from each application directory. The recorded Rust/WASM build used Rust 1.99.1, the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, and Clang 18. The checks and builds passed in the existing WSL2 Ubuntu 24.04 environment with those tools available. A fresh base-image provisioning run was not independently performed; the earlier QEDIT transaction-tool checks used task-local extracted packages under `/tmp`.
 
 ## Claim-circuit implementation boundary
 

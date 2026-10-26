@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { api, publicActionBlocks, type Claim } from "../../../lib/api";
+const dockerJudge = process.env.NEXT_PUBLIC_HOROI_DEMO_MODE === "true";
 
 function bytes32(value: string, field: string): Uint8Array {
   if (!/^(?:[0-9a-fA-F]{2}){32}$/.test(value)) throw new Error(`${field} must be 32-byte hexadecimal.`);
@@ -172,15 +173,21 @@ export default function ClaimDetails() {
             <div><dt>Exclusion root</dt><dd>{claim.exclusionRoot}</dd></div>
             <div><dt>Expires</dt><dd>{claim.expiresAt === null ? "Never" : new Date(claim.expiresAt * 1000).toISOString()}</dd></div>
           </dl>
-          <p className="notice">Experimental, unaudited. This proof currently supports one normal note. The spending key, note scanning, and witness construction stay in this browser; only public chain data is downloaded and only the proof and alternate nullifier are submitted.</p>
           <div className="actions">
             <Link className="button" href="/verify">Verify a proof bundle</Link>
           </div>
-          <form className="proof-form" onSubmit={proveAndSubmit}>
-            <label>Testnet spending key (32-byte hex)<input ref={spendingKeyInput} type="password" autoComplete="off" required pattern="(?:[0-9a-fA-F]{2}){32}" /></label>
-            <p className="notice">Use a testnet-only key. It is processed locally and never sent to the backend. Do not use a mainnet key.</p>
-            <button className="button primary" disabled={busy}>{busy ? "Scanning and proving…" : "Scan locally and submit proof"}</button>
-          </form>
+          {dockerJudge ? (
+            <p className="notice">This Docker fixture is not a live chain snapshot and has no browser proof-generation inputs. Run the separate server-side fixture verification scenarios on <Link href="/demo">the demo page</Link>.</p>
+          ) : (
+            <>
+              <p className="notice">Experimental, unaudited. This proof currently supports one normal note. The spending key, note scanning, and witness construction stay in this browser; only public chain data is downloaded and only the proof and alternate nullifier are submitted.</p>
+              <form className="proof-form" onSubmit={proveAndSubmit}>
+                <label>Testnet spending key (32-byte hex)<input ref={spendingKeyInput} type="password" autoComplete="off" required pattern="(?:[0-9a-fA-F]{2}){32}" /></label>
+                <p className="notice">Use a testnet-only key. It is processed locally and never sent to the backend. Do not use a mainnet key.</p>
+                <button className="button primary" disabled={busy}>{busy ? "Scanning and proving…" : "Scan locally and submit proof"}</button>
+              </form>
+            </>
+          )}
           {progress && <p role="status">{progress}</p>}
           {error && <p className="error" role="alert">{error}</p>}
           {result && <p className="success" role="status">{result}</p>}

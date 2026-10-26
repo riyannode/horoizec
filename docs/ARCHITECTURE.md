@@ -1,17 +1,25 @@
 # Architecture
 
-Horoi has five Next.js pages, a Bun/Hono API with SQLite, a Rust claim library shared with browser WASM, a native Rust verifier process, and a QEDIT Zebra RPC connection.
+Horoi has the five MVP Next.js routes plus the authorized ZECATHON `/demo` walkthrough, a Bun/Hono API with SQLite, one canonical Rust claim library shared with browser WASM and the native verifier, and an optional QEDIT Zebra RPC connection for non-demo operation.
 
 ```mermaid
 flowchart LR
-  Holder[Holder browser] -->|public claim and proof bundle| API[Hono API]
-  Holder -->|public chain ranges| API
-  Holder -->|local key, scan, witness, proof| WASM[Rust WASM]
+  Holder[Browser] -->|HTTP :3000| Next[Next.js frontend]
+  Next -->|/api proxy to backend:8787| API[Bun/Hono API]
+  Holder -->|local key, scan, witness, proof in non-demo mode| WASM[Rust WASM]
   API --> DB[(SQLite claims and consumed alternate nullifiers)]
-  API --> RPC[QEDIT Zebra JSON-RPC]
   API --> Verifier[Native Rust verifier]
+  API -. optional non-demo path .-> RPC[QEDIT Zebra JSON-RPC]
   Verifier --> Core[Rust ClaimVerifier]
 ```
+
+## Docker execution modes and trust boundaries
+
+The default root `docker-compose.yml` is **DOCKER JUDGE DEMO**. Browser traffic reaches the Next.js production container on port 3000; Next.js proxies `/api` to `http://backend:8787` over an internal Compose network. The backend runs the native `horoi-verifier` and writes replay state to a project-scoped persistent SQLite volume. Only the frontend port is published to the host. This mode has no `.env`, RPC credentials, public-chain access, or snapshot scan at startup.
+
+Judge and public Docker modes both load the exact pinned HCP1 fixture and the same Rust verifier. At startup Rust derives the claim ID/domain and verifies the positive proof before the backend is marked healthy. The local synthetic roots are pinned to the fixture and are not resolved against Zebra or QEDIT public testnet. The tamper and replay scenarios pass through the native verifier; replay consumption uses the same atomic unique-key SQLite operation as the normal submit route. `/demo` fixture verification is distinct from browser-local WASM proof generation.
+
+The separate `public` Compose profile runs as project `horoi-public`, with its own generated network, volume, and containers. It publishes only frontend loopback port 3001 for an existing HTTPS reverse proxy. Its frontend still proxies privately to `backend:8787`; the backend and database have no host-published ports. Demo-mode claim creation and action-range fetching are disabled, and public proof endpoints share a bounded process-wide rate limit. The public VPS hostname and reverse proxy provide the external TLS boundary.
 
 ## Proof flow
 
