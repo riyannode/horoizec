@@ -46,14 +46,14 @@ Target runtime: 110–118 seconds. Record the Docker Judge Demo from a clean loc
 | --- | --- | --- |
 | 0–15 s | `/demo` title and privacy copy | “Zcash Shielded Assets protect holder and value, but applications still need eligibility checks. Asking users to publish an address or balance undermines that privacy.” |
 | 15–30 s | Horoi introduction | “Horoi is a prototype for proving that a private asset note meets a threshold at a fixed snapshot, while keeping the note and exact value private.” |
-| 30–48 s | Public claim statement and fixture provenance | “This claim binds the network, ZIP 227 AssetId, threshold, snapshot height, and commitment and exclusion roots. This Docker fixture is synthetic local regtest evidence, not a QEDIT testnet snapshot.” |
+| 30–48 s | Public claim statement and fixture provenance | “This claim binds the network, ZIP 227 AssetId, threshold, snapshot height, and commitment and exclusion roots. The Docker fixture carries a `zebra-regtest` tag, but its synthetic roots were not produced by a running Zebra node or QEDIT testnet.” |
 | 48–66 s | Click **Verify valid fixture** | “The backend sends the pinned HCP1 bundle through Horoi’s native Rust verifier. The result is valid because the cryptographic verifier accepts it.” |
 | 66–80 s | Click **Verify tampered fixture** | “Now the backend flips one proof byte and runs the same verifier. It returns `INVALID_PROOF`; the page does not hardcode a rejection.” |
 | 80–96 s | Click **Run replay scenario** | “The first proof submission is accepted. SQLite records its claim-specific alternate nullifier; submitting the same note proof again returns `NULLIFIER_USED`.” |
 | 96–108 s | Privacy boundary panel | “AssetId, threshold, snapshot statement, result, and claim-specific nullifier are public. Spending key, exact value, witness, note details, and wallet identity stay private.” |
 | 108–118 s | Brief architecture or repository view | “Browser-local Rust/WASM proving is separate from this server-side fixture walkthrough. Horoi supports one normal note, remains experimental and unaudited, and does not support mainnet or aggregate balances.” |
 
-No recording or video URL is included yet. Record and review the 110–118 second capture after the public HTTPS demo route is assigned and verified; upload/publish it only with separate approval.
+No recording or video URL is included yet. Record the 110–118 second walkthrough from a clean local Docker run and keep the fixture provenance visible. The public HTTPS URL remains a separate submission requirement; upload or publish the video only with separate approval.
 
 ## Prepared submission fields
 
