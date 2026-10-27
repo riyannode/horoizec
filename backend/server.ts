@@ -2,8 +2,9 @@ import { Hono, type Context, type Next } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import { config } from "./config";
-import { consumeNullifier, getClaim, listClaims, saveClaim } from "./db";
+import { consumeNullifier, createIsolatedNullifierStore, getClaim, listClaims, saveClaim } from "./db";
 import { createClaimSchema, verifySchema } from "./schema";
 import { deriveClaim, validateAssetId, verifyProof } from "./proof";
 import { getPublicActionBlocks, resolveSnapshot } from "./zcash";
@@ -30,6 +31,7 @@ const messages: Record<string, string> = {
   DEMO_READ_ONLY: "Docker demo mode exposes only its pinned claim fixture.",
   DEMO_FIXTURE_INVALID: "The pinned HCP1 fixture failed native verification.",
   DEMO_TAMPER_CHECK_FAILED: "The native verifier did not reject the tampered fixture as expected.",
+  DEMO_REPLAY_CHECK_FAILED: "The isolated SQLite replay fixture did not reject its duplicate nullifier.",
   NETWORK_MISMATCH: "The configured node is not the selected testnet or regtest network.",
   ZSA_UNSUPPORTED: "The configured chain has not activated OrchardZSA support.",
   INTERNAL_ERROR: "An internal error occurred."
@@ -46,20 +48,69 @@ app.use("*", async (c, next) => {
 });
 app.onError((error, c) => {
   const code = Object.hasOwn(messages, error.message) ? error.message : "INTERNAL_ERROR";
-  const status = code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" ? 503 : 400;
+  const status = code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
   return c.json({ error: { code, message: messages[code] ?? messages.BAD_REQUEST, requestId: c.get("requestId") } }, status);
 });
 
 app.get("/api/v1/health", (c) => c.json({ ok: true, version: "1.0.0", network: config.NETWORK_ID }));
-let cryptoWindowStartedAt = 0;
+const CRYPTO_WINDOW_MS = 60_000;
+const GLOBAL_CRYPTO_LIMIT = 48;
+const CLIENT_CRYPTO_LIMIT = 8;
+const MAX_CLIENT_BUCKETS = 256;
+const MAX_CONCURRENT_VERIFICATIONS = 2;
+type ClientBucket = { windowStartedAt: number; requests: number; active: number };
+let cryptoWindowStartedAt = Date.now();
 let cryptoRequests = 0;
+let activeVerifications = 0;
+const clientBuckets = new Map<string, ClientBucket>();
 async function limitDemoCrypto(c: Context<{ Variables: Variables }>, next: Next) {
-  if (config.HOROI_DEMO_MODE) {
-    if (Date.now() - cryptoWindowStartedAt >= 60_000) { cryptoWindowStartedAt = Date.now(); cryptoRequests = 0; }
-    if (cryptoRequests >= 12) return c.json({ error: { code: "RATE_LIMITED", message: "The demo verifier is busy. Try again shortly.", requestId: c.get("requestId") } }, 429);
-    cryptoRequests++;
+  if (!config.HOROI_DEMO_MODE) return next();
+  const now = Date.now();
+  if (now - cryptoWindowStartedAt >= CRYPTO_WINDOW_MS) {
+    cryptoWindowStartedAt = now;
+    cryptoRequests = 0;
   }
-  await next();
+  const cost = c.req.path === "/api/v1/demo/submit" ? 2 : 1;
+  const proxyAddress = config.HOROI_TRUST_PROXY_CLIENT_IP ? c.req.header("x-horoi-client-ip") : undefined;
+  const clientAddress = proxyAddress && isIP(proxyAddress) ? proxyAddress : undefined;
+  for (const [address, bucket] of clientBuckets) {
+    if (!bucket.active && now - bucket.windowStartedAt >= CRYPTO_WINDOW_MS) clientBuckets.delete(address);
+  }
+  const reject = (retryAfterMs: number) => c.json({
+    error: { code: "RATE_LIMITED", message: "The verifier is busy. Try again shortly.", requestId: c.get("requestId") },
+  }, 429, { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) });
+  if (activeVerifications >= MAX_CONCURRENT_VERIFICATIONS) return reject(2_000);
+  if (cryptoRequests + cost > GLOBAL_CRYPTO_LIMIT) return reject(CRYPTO_WINDOW_MS - (now - cryptoWindowStartedAt));
+
+  let clientBucket: ClientBucket | undefined;
+  if (clientAddress) {
+    clientBucket = clientBuckets.get(clientAddress);
+    if (!clientBucket) {
+      if (clientBuckets.size >= MAX_CLIENT_BUCKETS) return reject(CRYPTO_WINDOW_MS);
+      clientBucket = { windowStartedAt: now, requests: 0, active: 0 };
+      clientBuckets.set(clientAddress, clientBucket);
+    } else if (now - clientBucket.windowStartedAt >= CRYPTO_WINDOW_MS) {
+      clientBucket.windowStartedAt = now;
+      clientBucket.requests = 0;
+    }
+    if (clientBucket.active >= 1) return reject(2_000);
+    if (clientBucket.requests + cost > CLIENT_CRYPTO_LIMIT) {
+      return reject(CRYPTO_WINDOW_MS - (now - clientBucket.windowStartedAt));
+    }
+  }
+
+  cryptoRequests += cost;
+  activeVerifications++;
+  if (clientBucket) {
+    clientBucket.requests += cost;
+    clientBucket.active++;
+  }
+  try {
+    await next();
+  } finally {
+    activeVerifications--;
+    if (clientBucket) clientBucket.active--;
+  }
 }
 app.use("/api/v1/proofs/verify", limitDemoCrypto);
 app.use("/api/v1/claims/:id/submit", limitDemoCrypto);
@@ -76,7 +127,11 @@ async function assertActiveSnapshot(claim: NonNullable<ReturnType<typeof getClai
     throw new Error("SNAPSHOT_STALE");
   }
 }
-async function acceptProof(claim: NonNullable<ReturnType<typeof getClaim>>, input: ReturnType<typeof verifySchema.parse>) {
+async function acceptProof(
+  claim: NonNullable<ReturnType<typeof getClaim>>,
+  input: ReturnType<typeof verifySchema.parse>,
+  consume = consumeNullifier,
+) {
   const result = await verifyProof({
     networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
     snapshotHeight: claim.snapshotHeight, commitmentRoot: claim.commitmentRoot,
@@ -89,7 +144,7 @@ async function acceptProof(claim: NonNullable<ReturnType<typeof getClaim>>, inpu
   }
   await assertActiveSnapshot(claim);
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
-  if (!consumeNullifier(claim.id, result.alternateNullifier)) throw new Error("NULLIFIER_USED");
+  if (!consume(claim.id, result.alternateNullifier)) throw new Error("NULLIFIER_USED");
   return result.alternateNullifier;
 }
 async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Promise<unknown> {
@@ -206,13 +261,31 @@ app.post("/api/v1/demo/submit", async (c) => {
   const body = z.object({ fixtureId: z.literal("judge-hcp1") }).strict().safeParse(await parseJsonBody(c));
   if (!body.success) throw new Error("BAD_REQUEST");
   const claim = getDemoClaim();
-  const acceptedNullifier = await acceptProof(claim, {
+  const input = verifySchema.parse({
     claimId: claim.id,
     protocolVersion: 1,
     proof: getDemoProofBundle(),
     alternateNullifiers: [getDemoFixtureNullifier()],
   });
-  return c.json({ accepted: true, replayProtection: "note-level", alternateNullifier: acceptedNullifier }, 201);
+  const isolatedStore = createIsolatedNullifierStore(claim);
+  try {
+    const acceptedNullifier = await acceptProof(claim, input, isolatedStore.consume);
+    try {
+      await acceptProof(claim, input, isolatedStore.consume);
+      throw new Error("DEMO_REPLAY_CHECK_FAILED");
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "NULLIFIER_USED") throw error;
+    }
+    return c.json({
+      firstSubmission: { accepted: true },
+      replay: { accepted: false, errorCode: "NULLIFIER_USED" },
+      replayProtection: "note-level",
+      state: "isolated-sqlite-per-run",
+      alternateNullifier: acceptedNullifier,
+    });
+  } finally {
+    isolatedStore.close();
+  }
 });
 
 await initializeDemoFixture();

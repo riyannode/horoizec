@@ -26,9 +26,11 @@ Errors: BAD_REQUEST (400), DEMO_FIXTURE_INVALID (503), DEMO_TAMPER_CHECK_FAILED 
 
 ### POST /demo/submit
 
-Request JSON: `{ "fixtureId": "judge-hcp1" }`. The backend verifies the pinned proof and passes its derived alternate nullifier to the same SQLite atomic-consumption path used by `POST /claims/:id/submit`.
+Request JSON: `{ "fixtureId": "judge-hcp1" }`. Each request creates a temporary in-memory SQLite database from the normal migration, inserts the pinned public claim, and runs the same native HCP1 acceptance path twice. Both calls verify the proof and use the same atomic SQLite nullifier insert; the first insert succeeds and the duplicate fails with `NULLIFIER_USED`. The database closes when the request completes, so each walkthrough starts clean and does not alter persistent judge or public claim state.
 
-Response 201: `{ "accepted": true, "replayProtection": "note-level", "alternateNullifier": string }` for first use. Repeating the same request returns HTTP 409 `NULLIFIER_USED` after HCP1 verification. Verification/submission requests share a 12-request-per-minute in-memory limit in demo mode.
+Response 200: `{ "firstSubmission": { "accepted": true }, "replay": { "accepted": false, "errorCode": "NULLIFIER_USED" }, "replayProtection": "note-level", "state": "isolated-sqlite-per-run", "alternateNullifier": string }`. These are the results of the two real verifier/database operations inside one walkthrough request, not simulated HTTP 201/409 responses.
+
+In demo mode, crypto routes have a process-wide budget of 48 verifier-operation units per minute, an 8-unit per-client budget when `HOROI_TRUST_PROXY_CLIENT_IP=true` and a valid `X-Horoi-Client-IP` is supplied by the configured proxy, a two-operation concurrency cap, and at most 256 client buckets. `/demo/submit` costs two units. Rejections return HTTP 429 with `Retry-After`. Normal mode keeps the existing verifier admission behavior. `X-Forwarded-For` is never used as client identity.
 
 Demo mode also returns DEMO_READ_ONLY (403) for claim creation and public action-range fetching. These safeguards prevent cold public-chain scanning in Docker.
 

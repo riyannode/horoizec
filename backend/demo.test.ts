@@ -11,6 +11,7 @@ function getDb(): typeof import("./db").db {
 beforeAll(async () => {
   process.env.DATABASE_PATH = ":memory:";
   process.env.HOROI_DEMO_MODE = "true";
+  process.env.HOROI_TRUST_PROXY_CLIENT_IP = "true";
   process.env.NETWORK_ID = "zebra-regtest";
   ({ default: server } = await import("./server"));
   ({ db } = await import("./db"));
@@ -26,7 +27,7 @@ afterAll(async () => {
 });
 
 describe("Docker judge fixture", () => {
-  it("uses the native HCP1 verifier and atomically rejects a same-domain replay", async () => {
+  it("uses the native HCP1 verifier and repeats an isolated SQLite replay walkthrough", async () => {
     const fixtureResponse = await server.fetch(new Request("http://localhost/api/v1/demo/fixture"));
     const fixture = await fixtureResponse.json() as { claimId: string; alternateNullifier: string; provenance: string };
     expect(fixtureResponse.status).toBe(200);
@@ -47,19 +48,68 @@ describe("Docker judge fixture", () => {
     const request = () => server.fetch(new Request("http://localhost/api/v1/demo/submit", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fixtureId: "judge-hcp1" }),
     }));
-    const accepted = await request();
-    expect(accepted.status).toBe(201);
-    expect(await accepted.json()).toMatchObject({ accepted: true, replayProtection: "note-level" });
-    const replay = await request();
-    expect(replay.status).toBe(409);
-    expect(await replay.json()).toMatchObject({ error: { code: "NULLIFIER_USED" } });
+    for (let run = 0; run < 2; run++) {
+      const walkthrough = await request();
+      expect(walkthrough.status).toBe(200);
+      expect(await walkthrough.json()).toMatchObject({
+        firstSubmission: { accepted: true },
+        replay: { accepted: false, errorCode: "NULLIFIER_USED" },
+        replayProtection: "note-level",
+        state: "isolated-sqlite-per-run",
+        alternateNullifier: fixture.alternateNullifier,
+      });
+    }
 
     const stored = getDb().query("SELECT COUNT(*) AS count FROM nullifiers WHERE claim_id = ? AND nullifier = ?").get(fixture.claimId, fixture.alternateNullifier) as { count: number };
-    expect(stored.count).toBe(1);
+    expect(stored.count).toBe(0);
+  });
 
-    getDb().query("DELETE FROM nullifiers WHERE claim_id = ? AND nullifier = ?").run(fixture.claimId, fixture.alternateNullifier);
-    expect((await request()).status).toBe(201);
-    expect((await request()).status).toBe(409);
+  it("limits per-client admissions using only the trusted proxy header", async () => {
+    const request = (headers: Record<string, string>) => server.fetch(new Request("http://localhost/api/v1/demo/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ scenario: "invalid" }),
+    }));
+
+    for (let i = 0; i < 9; i++) {
+      expect((await request({ "x-forwarded-for": "192.0.2.44" })).status).toBe(400);
+    }
+    for (let i = 0; i < 8; i++) {
+      expect((await request({ "x-horoi-client-ip": "192.0.2.44" })).status).toBe(400);
+    }
+    const limited = await request({ "x-horoi-client-ip": "192.0.2.44" });
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+
+  it("bounds concurrent native verifier requests", async () => {
+    const request = (address: string) => server.fetch(new Request("http://localhost/api/v1/demo/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-horoi-client-ip": address },
+      body: JSON.stringify({ scenario: "valid" }),
+    }));
+    const responses = await Promise.all([
+      request("192.0.2.51"), request("192.0.2.52"), request("192.0.2.53"),
+    ]);
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(2);
+    const limited = responses.find((response) => response.status === 429);
+    expect(limited).toBeDefined();
+    expect(Number(limited?.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+
+  it("keeps demo rate limits out of normal mode", async () => {
+    const { config } = await import("./config");
+    config.HOROI_DEMO_MODE = false;
+    try {
+      for (let i = 0; i < 49; i++) {
+        const response = await server.fetch(new Request("http://localhost/api/v1/proofs/verify", {
+          method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+        }));
+        expect(response.status).toBe(400);
+      }
+    } finally {
+      config.HOROI_DEMO_MODE = true;
+    }
   });
 
   it("keeps judge requests off the public-chain snapshot path", async () => {

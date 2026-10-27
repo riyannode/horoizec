@@ -7,6 +7,7 @@ const configSchema = z.object({
   ZCASH_RPC_USER: z.string().optional(),
   ZCASH_RPC_PASSWORD: z.string().optional(),
   HOROI_DEMO_MODE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  HOROI_TRUST_PROXY_CLIENT_IP: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   DATABASE_PATH: z.string().default("./horoi.db"),
   VERIFIER_PATH: z.string().default("./rust/target/release/horoi-verifier")
 }).superRefine((value, ctx) => {

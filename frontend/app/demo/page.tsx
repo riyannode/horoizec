@@ -17,7 +17,14 @@ type Fixture = {
   alternateNullifier: string;
 };
 type VerifyResult = { valid: boolean; verifier: string; alternateNullifier?: string; verifierErrorCode?: string };
-type ReplayResult = { accepted?: boolean; replayProtection?: string; alternateNullifier?: string; error?: { code?: string; message?: string } };
+type ReplayResult = {
+  firstSubmission?: { accepted: boolean };
+  replay?: { accepted: boolean; errorCode: string };
+  replayProtection?: string;
+  state?: string;
+  alternateNullifier?: string;
+  error?: { code?: string; message?: string };
+};
 
 async function submitReplay(): Promise<{ status: number; body: ReplayResult }> {
   const response = await fetch("/api/v1/demo/submit", {
@@ -68,17 +75,13 @@ export default function Demo() {
     setRunning("replay");
     setReplayResult("");
     try {
-      const first = await submitReplay();
-      if (first.status === 409 && first.body.error?.code === "NULLIFIER_USED") {
-        setReplayResult("HTTP 409 · NULLIFIER_USED · this persistent demo database already recorded the first acceptance. Reset the local judge volume to replay from a clean state.");
-        return;
+      const result = await submitReplay();
+      if (result.status !== 200 || result.body.firstSubmission?.accepted !== true
+        || result.body.replay?.accepted !== false || result.body.replay.errorCode !== "NULLIFIER_USED"
+        || result.body.state !== "isolated-sqlite-per-run") {
+        throw new Error(`Replay walkthrough returned HTTP ${result.status} or an unexpected verifier result.`);
       }
-      if (first.status !== 201 || first.body.accepted !== true) throw new Error(`First submission returned HTTP ${first.status}.`);
-      const second = await submitReplay();
-      if (second.status !== 409 || second.body.error?.code !== "NULLIFIER_USED") {
-        throw new Error(`The duplicate submission returned HTTP ${second.status}, expected HTTP 409 NULLIFIER_USED.`);
-      }
-      setReplayResult("First submission: HTTP 201 accepted · second identical HCP1 submission: HTTP 409 NULLIFIER_USED.");
+      setReplayResult("First genuine HCP1 submission accepted · the same proof and note-level alternate nullifier were verified again and rejected by the isolated SQLite unique constraint (NULLIFIER_USED). This walkthrough starts fresh on every run.");
     } catch (error) {
       setReplayResult(`ERROR · ${error instanceof Error ? error.message : "Replay scenario failed."}`);
     } finally {
@@ -128,7 +131,7 @@ export default function Demo() {
             <section className="demo-card">
               <p className="eyebrow">SCENARIO C</p>
               <h2>Claim-domain replay</h2>
-              <p>Submit the genuine proof once, then submit the same note-level alternate nullifier and proof again. Both requests run HCP1 verification and the SQLite unique-key insert.</p>
+              <p>Run two genuine HCP1 verifications against a fresh, request-local SQLite ledger. The first consumes the note-level alternate nullifier; the second is rejected by the same unique constraint used by persistent claims. Each run closes its temporary database.</p>
               <button className="button" disabled={Boolean(running)} onClick={() => void replay()}>{running === "replay" ? "Submitting twice…" : "Run replay scenario"}</button>
               <p className="demo-status" role="status" aria-live="polite">{replayResult}</p>
             </section>

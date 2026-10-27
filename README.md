@@ -16,7 +16,7 @@ docker compose up --build
 
 Open [http://localhost:3000/demo](http://localhost:3000/demo). The first build compiles Horoi's locked Rust verifier and production Next.js/Bun apps. No `.env`, wallet, RPC credentials, paid service, live chain scan, or new transaction is required. Only the frontend port is published; backend and SQLite stay on the isolated Compose network/volume.
 
-The demo verifies a checked-in HCP1 proof fixture using the actual native Rust verifier, cryptographically rejects a one-byte-tampered copy, and exercises SQLite note-level replay protection. Its provenance is **LOCAL SYNTHETIC TEST FIXTURE**: the proof binds the `zebra-regtest` statement identifier and local Orchard test roots; it is not evidence from a Zebra node or public QEDIT testnet. The fixture route does not generate a new browser proof. The separate live `/claims/[id]` browser proving path remains in the existing app configuration.
+The demo verifies a checked-in HCP1 proof fixture using the actual native Rust verifier, cryptographically rejects a one-byte-tampered copy, and exercises SQLite note-level replay protection. The replay walkthrough uses a temporary SQLite database per run, verifies the genuine proof twice, and does not consume or reset shared judge state. Its provenance is **LOCAL SYNTHETIC TEST FIXTURE**: the proof binds the `zebra-regtest` statement identifier and local Orchard test roots; it is not evidence from a Zebra node or public QEDIT testnet. The fixture route does not generate a new browser proof. The separate live `/claims/[id]` browser proving path remains in the existing app configuration.
 
 Reset only the local judge state and its named volume with:
 

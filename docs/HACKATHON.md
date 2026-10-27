@@ -14,7 +14,7 @@ Horoi combines ZIP 227 AssetId binding, a fixed Orchard snapshot, public standar
 
 ## Demo and evidence
 
-The canonical judge walkthrough is [http://localhost:3000/demo](http://localhost:3000/demo), started from a fresh clone with `docker compose up --build`. It is zero-credential and uses the actual Horoi Rust/HCP1 verifier for valid, tampered, and SQLite replay scenarios. Its fixture is labeled **LOCAL SYNTHETIC TEST FIXTURE** and is not a public QEDIT testnet proof. See [DEMO.md](DEMO.md) for exact commands and limits. The local judge stack and the VPS `horoi-public` containers are currently stopped; the VPS SQLite volume is preserved. The VPS profile had been loopback-only at `127.0.0.1:3001`; the UNMET-owned proxy remains unchanged and no public HTTPS URL is configured.
+The canonical judge walkthrough is [http://localhost:3000/demo](http://localhost:3000/demo), started from a fresh clone with `docker compose up --build`. It is zero-credential and uses the actual Horoi Rust/HCP1 verifier for valid, tampered, and SQLite replay scenarios. Its fixture is labeled **LOCAL SYNTHETIC TEST FIXTURE** and is not a public QEDIT testnet proof. See [DEMO.md](DEMO.md) for exact commands and limits. The separate VPS Compose profile is configured to bind only `127.0.0.1:3001`; that loopback address is not a public demo URL. The existing UNMET Caddy container has `admin off` and a Caddyfile baked into its image, so adding a hostname would require recreating an unrelated production container. The candidate `horoi.unmetxyz.my.id` has no DNS record, and no public HTTPS Horoi route or external browser acceptance exists. The VPS Docker and DNS findings are recorded in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 The recorded public-testnet demo used one genuine eligible note at QEDIT ZSA snapshot 7596. The browser generated an HCP1 proof, the API accepted it, stateless verification returned `valid: true`, identical replay returned HTTP 409 `NULLIFIER_USED`, and a one-bit mutation returned `valid: false`. The submit request was inspected for private-data leakage. See [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md) for the full record; the run is historical and its exact runtime checkout SHA was not captured.
 
@@ -60,7 +60,7 @@ An unpublished 114-second narrated video is prepared from captured `/demo` UI sc
 - **Project name:** Horoi
 - **Track:** Core & Tooling
 - **Repository:** https://github.com/riyannode/horoizec (public; unauthenticated clone verified on 2026-10-27)
-- **Working demo URL:** No public HTTPS URL is available; VPS Docker profile remains loopback-only at 127.0.0.1:3001 per current user direction.
+- **Working demo URL:** No public HTTPS URL is available; VPS Docker profile binds loopback-only at 127.0.0.1:3001 while the shared UNMET Caddy route remains unchanged.
 - **Video URL:** Pending recording and separately authorized publication.
 - **Registered account:** @hpelong377
 - **Telegram contact:** @riyanhcr

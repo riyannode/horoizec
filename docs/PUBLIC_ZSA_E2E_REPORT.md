@@ -3,7 +3,7 @@
 Date: 2026-10-25
 Repository: `riyannode/horoizec`
 Branch: `feat/vercel-fullstack`
-PR head containing this report: `9bf59d238654bd6853adfc3c1204117c58961c4b`
+Original PR head for the historical public E2E record: `9bf59d238654bd6853adfc3c1204117c58961c4b`
 PR base at task start: `d75339365f2af6e7be913e773ad9f057050afe3c`
 
 The browser result was recorded during the work that produced the PR head above, before the later Dedicated Worker follow-up. The original run record identified the task-start base as “Baseline HEAD”; it did not capture the exact checkout SHA loaded by the browser. Treat the result as historical, task-reported evidence for the non-Worker implementation, not as an independently reproduced result for a precisely fingerprinted browser build.
@@ -129,9 +129,9 @@ No browser E2E, testnet transaction, or full-chain performance benchmark was run
 
 The prior E2E task stopped its backend/frontend processes and removed its temporary scan resources. During the original stabilization run, no server, browser session, transaction, or persistent process was started; build and test commands exited normally. Ports 3000, 8787, and 8788 were checked closed after that validation.
 
-## Docker Judge Demo acceptance (2026-10-27)
+## Initial Docker Judge Demo acceptance (2026-10-27; replay behavior superseded below)
 
-**DOCKER_JUDGE_DEMO_VERIFIED locally.** These results are separate from the historical public QEDIT testnet E2E above. The judge fixture is a local synthetic Orchard test fixture, not a public-chain snapshot or public QEDIT proof.
+These initial results are separate from the historical public QEDIT testnet E2E above. The judge fixture is a local synthetic Orchard test fixture, not a public-chain snapshot or public QEDIT proof. The original persistent replay sequence is retained as historical acceptance evidence; its behavior was replaced by the repeatable isolated walkthrough documented in the final acceptance section below.
 
 | Check | Result | Evidence |
 | --- | --- | --- |
@@ -148,6 +148,41 @@ The prior E2E task stopped its backend/frontend processes and removed its tempor
 
 The default Compose file uses an internal backend network plus a frontend-only edge bridge so Docker Desktop can publish the loopback frontend port while the backend remains unpublished. The public profile uses a separate Compose project name and loopback port `3001`. The initial VPS preflight found ports 80/443 owned by the existing `unmet-web` Caddy 2.11.2 container, no standalone host Caddy service/configuration, and 1.9 GiB total memory. Reusing the proxy would require changing the UNMET web container, so no unrelated service or shared proxy configuration was changed.
 
-On 2026-10-27, a read-only VPS check confirmed the isolated `horoi-public` project was running: backend and frontend were healthy, `http://127.0.0.1:3001/demo` returned HTTP 200, only the frontend was host-bound, and the backend exposed no host port. The deployed image IDs were backend `sha256:aa16e2828b31fa473ee0e3f746a92c23b95b5d27cb0fd8df51b20b700d2a6053` and frontend `sha256:80fb784ff59d0648c034fd7a2ad64975a975a4447912de4231758ea6df76f04a`. The deployment directory is `/opt/horoi-public-3dfb58c`, corresponding to source commit `3dfb58c983536a087327c82b4f68870e197f09b4`; the host checkout has no Git metadata, so that source identity is recorded from the isolated deployment directory and its matching validated image IDs. Later on 2026-10-27, both Horoi containers were stopped at user direction with the SQLite volume preserved; a follow-up check found no listener on `127.0.0.1:3001`. The service had been loopback-only. No public HTTPS URL or external unauthenticated browser acceptance exists; `PUBLIC_HTTPS_STATUS=NOT_CONFIGURED_BY_USER_DIRECTION`.
+On 2026-10-27, a read-only VPS check confirmed the isolated `horoi-public` project was running: backend and frontend were healthy, `http://127.0.0.1:3001/demo` returned HTTP 200, only the frontend was host-bound, and the backend exposed no host port. The deployed image IDs were backend `sha256:aa16e2828b31fa473ee0e3f746a92c23b95b5d27cb0fd8df51b20b700d2a6053` and frontend `sha256:80fb784ff59d0648c034fd7a2ad64975a975a4447912de4231758ea6df76f04a`. The deployment directory is `/opt/horoi-public-3dfb58c`, corresponding to source commit `3dfb58c983536a087327c82b4f68870e197f09b4`; the host checkout has no Git metadata, so that source identity is recorded from the isolated deployment directory and its matching validated image IDs. Later on 2026-10-27, both Horoi containers were stopped with the SQLite volume preserved; a follow-up check found no listener on `127.0.0.1:3001`. No public HTTPS URL or external unauthenticated browser acceptance existed at that checkpoint. The current Caddy reload limitation is documented below.
 
 The backend Rust release binary was built locally before running Bun tests. The default 5-second Bun test timeout can expire while the server validates the pinned fixture through the native verifier during test setup. The supported reproducible sequence is recorded in `docs/TESTING.md`: build the locked release verifier, then run `bun test --timeout=30000 --parallel=1`. That command passed both test files (5 tests, 31 assertions). The teardown tolerates setup failure without masking the original error.
+
+## Final repeatable Docker acceptance (2026-10-27)
+
+This is the latest local Docker Judge Demo behavior. It uses the same pinned public fixture and canonical native Rust verifier described above; it is not public QEDIT testnet evidence.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Clean production image build | PASS | `docker compose config --quiet`, public override config, and `docker compose --project-name horoi-final-label-build build --no-cache backend frontend` passed on Linux/x86_64. The build used frozen Bun dependencies, Rust 1.99.1 with `cargo build --locked`, and digest-pinned Bun/Rust bases. No `.env` or host-built verifier was present. |
+| Startup and route rendering | PASS | `docker compose up -d` started backend first, waited for healthy native-fixture verification, then started the frontend. Both became healthy. `/`, `/claims`, `/create`, `/verify`, `/demo`, and the pinned claim detail returned HTTP 200. The browser rendered `/demo` and showed the immutable claim, LOCAL SYNTHETIC TEST FIXTURE provenance, and privacy boundary. |
+| Valid and tampered HCP1 | PASS | Browser Scenario A returned `HTTP 200 · valid: true · horoi-verifier`. Scenario B flipped one proof byte and returned `HTTP 200 · valid: false · horoi-verifier returned INVALID_PROOF`. Both used the same Rust verifier. |
+| Repeatable claim-domain replay | PASS | Browser Scenario C returned a genuine first proof acceptance and a second verifier-plus-SQLite rejection with `NULLIFIER_USED`. Two separate walkthrough requests each returned HTTP 200 with those actual operation results. Each request created and closed an in-memory SQLite database using the production migration and unique nullifier constraint. The persistent database's `nullifiers` count remained zero, including after backend restart. |
+| Global and visitor limits | PASS | Three simultaneous native-verifier operations through the default stack returned two HTTP 200 and one HTTP 429 with `Retry-After: 2`. In the public Compose override, nine invalid requests carrying only `X-Forwarded-For` all reached validation (HTTP 400); eight with the configured `X-Horoi-Client-IP` reached validation and the ninth returned HTTP 429 with `Retry-After: 60`. The identity is accepted only when the public override enables proxy trust. |
+| Network, privacy, and resource isolation | PASS | Backend had no host port; frontend alone bound to `127.0.0.1:3000` (judge) or `127.0.0.1:3001` (public profile). Backend used the internal Docker network. Both ran as `bun` with read-only root filesystems; backend was limited to 512 MiB/1 CPU and frontend to 256 MiB/0.5 CPU. The frontend image contained no backend fixture. Private-term scans of both backend logs and credential-name scans of backend environment returned zero matches. Claim creation and action-range endpoints returned `DEMO_READ_ONLY`, so startup did not initiate a public RPC scan. |
+| Final test resource cleanup | PASS | The temporary `horoi-final-label-build` and `horoi-final-public-label-build` projects were stopped and removed with project-scoped `down -v --remove-orphans`. Their volumes and networks were absent afterward; pre-existing Horoi judge data was not touched. Windows ports 3000, 3001, and 8787 had no listener after cleanup. |
+
+The test images were tagged `horoi/horoi-backend:unknown` and `horoi/horoi-frontend:unknown`, with matching `org.opencontainers.image.revision=unknown` labels because this acceptance ran before the release commit existed. Release builds set `HOROI_SOURCE_SHA` to the exact Git commit; the final SHA and deployed image identities belong in the PR update and final task report.
+
+## Current PRD §24 acceptance summary
+
+| Criterion | Status | Evidence boundary |
+| --- | --- | --- |
+| A. Repository shape | VERIFIED | The project remains limited to `backend/`, `frontend/`, and `docs/` plus root configuration. Phase 2 Worker work remains on its separate preserved branch. |
+| B. ZSA network | RECORDED | Historical public QEDIT testnet identity and snapshot evidence is preserved above. The Docker fixture is explicitly local synthetic regtest data. |
+| C. Immutable claim | VERIFIED | The fixture statement binds network/protocol, ZIP 227 AssetId, threshold, snapshot roots, and claim domain; the selected statement is rendered in the browser. |
+| D. Privacy | VERIFIED LOCALLY | Judge frontend/API responses and runtime logs contain only public statement/proof results; the fixture and image contain no private witness, spending key, exact note value, or wallet identity. Historical public-testnet request inspection is recorded separately. |
+| E. Proof | RECORDED | One-note public-testnet proof acceptance is historical evidence. The judge proof is a distinct public synthetic fixture; no aggregate or multi-note scope is claimed. |
+| F. Verification | VERIFIED LOCALLY | The native Rust verifier accepted the genuine fixture and rejected a one-byte mutation. Historical public-testnet stateless acceptance/tamper results remain separately recorded. |
+| G. Replay | VERIFIED LOCALLY / RECORDED PUBLIC | The repeatable Docker walkthrough exercises actual SQLite uniqueness per request. Historical public testnet accepted a submission then returned HTTP 409 on duplicate. |
+| H. Domain separation | RECORDED | The historical public E2E recorded distinct alternate nullifiers for one note under different claim domains. Not newly exercised by the local synthetic fixture. |
+| I. Browser flow | PARTIAL | Local Docker `/demo` was browser-rendered and all MVP routes returned HTTP 200. No public HTTPS browser acceptance exists because no safe Horoi Caddy route is active. |
+| J. Build and checks | VERIFIED | Rust, Bun backend, frontend, Compose config, and no-cache x86_64 production image build passed; exact commands are in this report and `docs/TESTING.md`. |
+| K. Documentation | VERIFIED | Judge fixture provenance, Docker/public trust boundaries, API behavior, rate limits, and the public HTTPS deployment limitation are documented. |
+| L. Claim accuracy | VERIFIED | Historical public-testnet proof, local synthetic fixture verification, and unsupported capabilities are distinguished; no local fixture is described as public QEDIT E2E. |
+
+The public HTTPS requirement remains unfulfilled: the existing Caddy instance has `admin off` and a Caddyfile baked into the UNMET image, so an additive route cannot be reloaded without recreating that unrelated production container. No DNS record or public Horoi URL was created.

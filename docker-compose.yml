@@ -1,12 +1,14 @@
 name: horoi-judge
 
 x-frontend: &frontend
+  image: horoi/horoi-frontend:${HOROI_SOURCE_SHA:-unknown}
   build:
     context: ./frontend
     dockerfile: Dockerfile
     args:
       HOROI_API_ORIGIN: http://backend:8787
       NEXT_PUBLIC_HOROI_DEMO_MODE: "true"
+      HOROI_SOURCE_SHA: ${HOROI_SOURCE_SHA:-unknown}
   environment:
     NODE_ENV: production
     NEXT_TELEMETRY_DISABLED: "1"
@@ -37,14 +39,18 @@ x-frontend: &frontend
 
 services:
   backend:
+    image: horoi/horoi-backend:${HOROI_SOURCE_SHA:-unknown}
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        HOROI_SOURCE_SHA: ${HOROI_SOURCE_SHA:-unknown}
     environment:
       HOST: 0.0.0.0
       PORT: "8787"
       NETWORK_ID: zebra-regtest
       HOROI_DEMO_MODE: "true"
+      HOROI_TRUST_PROXY_CLIENT_IP: "false"
       DATABASE_PATH: /data/horoi.db
       VERIFIER_PATH: /usr/local/bin/horoi-verifier
     volumes:

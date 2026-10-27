@@ -19,6 +19,8 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS runtime
+ARG HOROI_SOURCE_SHA=unknown
+LABEL org.opencontainers.image.revision=$HOROI_SOURCE_SHA
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8787 NETWORK_ID=zebra-regtest HOROI_DEMO_MODE=true DATABASE_PATH=/data/horoi.db VERIFIER_PATH=/usr/local/bin/horoi-verifier
 WORKDIR /app
 COPY --from=bun-prod --chown=bun:bun /app/node_modules ./node_modules

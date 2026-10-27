@@ -21,7 +21,7 @@ curl --fail http://localhost:3000/demo
 docker compose down -v --remove-orphans
 ```
 
-For the HTTP/browser acceptance, open `/demo` in a browser, verify that the valid fixture returns `valid: true`, the tampered fixture returns `INVALID_PROOF`, and the replay sequence returns HTTP 201 followed by HTTP 409 `NULLIFIER_USED`. Check that backend is healthy before frontend, only frontend publishes a port, and no public RPC request or snapshot scan occurs. Repeat after `down -v`; this reset removes only `horoi-judge` resources. The actual Docker results for this checkout are recorded in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
+For the HTTP/browser acceptance, open `/demo` in a browser, verify that the valid fixture returns `valid: true`, the tampered fixture returns `INVALID_PROOF`, and the replay walkthrough reports a genuine first SQLite acceptance followed by `NULLIFIER_USED` from a second native HCP1 verification. Run the replay button more than once; each request owns and closes its temporary SQLite database, and the persistent `nullifiers` table remains unchanged. Check backend health before frontend, only frontend publishes a port, concurrent verifier admission is bounded, rate-limited responses include `Retry-After`, and no public RPC request or snapshot scan occurs. `docker compose down -v --remove-orphans` resets only `horoi-judge` resources. The actual Docker results for this checkout are recorded in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
 
 The browser WASM build also needs wasm32-unknown-unknown, wasm-bindgen-cli 0.2.129, and Clang 18; see [SETUP.md](SETUP.md).
 

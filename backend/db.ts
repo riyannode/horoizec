@@ -77,10 +77,37 @@ export function ensureDemoClaim(s: {
 }
 
 export function consumeNullifier(claimId: string, nullifier: string): boolean {
-  const result = db.query(`INSERT OR IGNORE INTO nullifiers (claim_id, nullifier, created_at) VALUES (?, ?, ?)`).run(
+  return consumeNullifierIn(db, claimId, nullifier);
+}
+
+function consumeNullifierIn(database: Database, claimId: string, nullifier: string): boolean {
+  const result = database.query(`INSERT OR IGNORE INTO nullifiers (claim_id, nullifier, created_at) VALUES (?, ?, ?)`).run(
     claimId,
     nullifier,
     Math.floor(Date.now() / 1000),
   );
   return result.changes === 1;
+}
+
+export function createIsolatedNullifierStore(claim: ClaimRecord) {
+  const isolated = new Database(":memory:");
+  try {
+    isolated.exec("PRAGMA foreign_keys = ON");
+    isolated.exec(readFileSync(new URL("./migrations/001_init.sql", import.meta.url), "utf8"));
+    isolated.query(`INSERT INTO claims
+      (id, protocol_version, network_id, name, description, asset_id, threshold, snapshot_height,
+       commitment_root, exclusion_root, claim_domain, creator_nonce, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        claim.id, claim.protocolVersion, claim.networkId, claim.name, claim.description, claim.assetId,
+        claim.threshold, claim.snapshotHeight, claim.commitmentRoot, claim.exclusionRoot, claim.claimDomain,
+        claim.creatorNonce, claim.expiresAt, claim.createdAt,
+      );
+    return {
+      consume: (claimId: string, nullifier: string) => consumeNullifierIn(isolated, claimId, nullifier),
+      close: () => isolated.close(),
+    };
+  } catch (error) {
+    isolated.close();
+    throw error;
+  }
 }

@@ -16,6 +16,8 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS runtime
+ARG HOROI_SOURCE_SHA=unknown
+LABEL org.opencontainers.image.revision=$HOROI_SOURCE_SHA
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 WORKDIR /app
 COPY --from=prod-deps --chown=bun:bun /app/node_modules ./node_modules

@@ -1,0 +1,4 @@
+services:
+  backend:
+    environment:
+      HOROI_TRUST_PROXY_CLIENT_IP: "true"
