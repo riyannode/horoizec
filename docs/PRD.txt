@@ -972,6 +972,16 @@ Backend:
       -> call Rust canonical claim builder
       -> persist immutable claim
 
+Browser transport addition (2026-10-27): the create form starts `POST
+/claims/jobs`, polls `GET /claims/jobs/:jobId`, and may cancel with `POST
+/claims/jobs/:jobId/cancel`. The bounded in-process job uses the same validation,
+canonical snapshot/root checks, claim derivation, and persistence path as
+`POST /claims`; the synchronous route remains available for clients that can
+hold the connection. A job has a 14-minute deadline, one active snapshot scan
+per backend process, and in-memory status only. Job status expires after 30
+minutes and is lost on backend restart. Client disconnect after job creation
+does not cancel the job; explicit cancellation aborts its RPC work.
+
 14.5 POST /proofs/verify
 
 Stateless proof verification.

@@ -66,6 +66,28 @@ Response 201: { "claim": Claim }. Roots, claim ID, claim domain, network ID, and
 
 Errors: BAD_REQUEST, INVALID_ASSET_ID, INVALID_THRESHOLD, INVALID_SNAPSHOT, NETWORK_MISMATCH, ZSA_UNSUPPORTED (all 400); MAINNET_DISABLED (403); SNAPSHOT_UNAVAILABLE, ZCASH_RPC_UNAVAILABLE, VERIFIER_UNAVAILABLE (503).
 
+## POST /claims/jobs
+
+Request JSON: same as `POST /claims`. Schema and native AssetId validation happen before snapshot admission.
+
+Response 202: `{ "jobId": string, "status": "running", "stage": string }`. The live backend performs the same canonical network/genesis checks, snapshot hash/root resolution, reorg checks, claim derivation, and SQLite insertion as `POST /claims`. The job has a 14-minute deadline, runs one snapshot scan at a time per backend process, and is not persisted. Job status is retained in memory for up to 30 minutes and is lost if the backend restarts.
+
+Errors: the same validation and network errors as `POST /claims`, plus RATE_LIMITED (429) when a scan is already active or the bounded job table is full.
+
+## GET /claims/jobs/:jobId
+
+Response 200 while running: `{ "jobId": string, "status": "running", "stage": string }`. On completion, the response includes `claim`; on failure, it includes a safe `{ "code", "message" }` error. Terminal statuses are `completed`, `failed`, and `cancelled`.
+
+Errors: CLAIM_JOB_NOT_FOUND (404) if the job is unknown, expired, or lost during a backend restart.
+
+## POST /claims/jobs/:jobId/cancel
+
+Request: no body. Aborts an active job and propagates cancellation to its snapshot/RPC work. A job that already completed or failed returns its current status without changing the claim.
+
+Response 200: the current job status object.
+
+Errors: CLAIM_JOB_NOT_FOUND (404).
+
 ## POST /proofs/verify
 
 Request JSON: { "claimId": 64-character lowercase hex, "protocolVersion": 1, "proof": base64 HCP1 bundle, "alternateNullifiers": [one 32-byte lowercase hex field encoding] }.

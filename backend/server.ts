@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "./config";
 import { consumeNullifier, createIsolatedNullifierStore, getClaim, listClaims, saveClaim } from "./db";
-import { createClaimSchema, verifySchema } from "./schema";
+import { createClaimSchema, type CreateClaimInput, verifySchema } from "./schema";
 import { deriveClaim, validateAssetId, verifyProof } from "./proof";
 import { getPublicActionBlocks, resolveSnapshot } from "./zcash";
 import { getDemoClaim, getDemoFixtureNullifier, getDemoOverview, getDemoProofBundle, initializeDemoFixture, isDemoClaim, pinnedDemoStatementMatches, verifyDemoProof } from "./demo";
@@ -14,6 +14,22 @@ import { z } from "zod";
 type Variables = { requestId: string; stage?: string; stageStartedAt?: number; snapshotHeight?: number; abortReason?: string };
 const app = new Hono<{ Variables: Variables }>();
 const ROUTE_DEADLINE_MS = 14 * 60_000;
+const CLAIM_JOB_TTL_MS = 30 * 60_000;
+const MAX_CLAIM_JOBS = 64;
+type ClaimCreationJob = {
+  id: string;
+  requestId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stage: string;
+  snapshotHeight: number;
+  startedAt: number;
+  controller: AbortController;
+  claim: NonNullable<ReturnType<typeof getClaim>> | null;
+  error: { code: string; message: string } | null;
+  deadlineExceeded: boolean;
+};
+const claimCreationJobs = new Map<string, ClaimCreationJob>();
+let activeClaimCreationJobId: string | undefined;
 function setStage(c: Context<{ Variables: Variables }>, stage: string) {
   c.set("stage", stage);
   c.set("stageStartedAt", performance.now());
@@ -37,6 +53,7 @@ async function withRouteDeadline<T>(c: Context<{ Variables: Variables }>, operat
 const messages: Record<string, string> = {
   BAD_REQUEST: "The request is invalid.",
   CLAIM_NOT_FOUND: "The claim was not found.",
+  CLAIM_JOB_NOT_FOUND: "The claim creation job was not found.",
   CLAIM_EXPIRED: "The claim has expired.",
   PROOF_INVALID: "The proof could not be verified.",
   PROOF_INPUT_MISMATCH: "The proof does not match this claim.",
@@ -71,7 +88,7 @@ app.use("*", async (c, next) => {
 });
 app.onError((error, c) => {
   const code = Object.hasOwn(messages, error.message) ? error.message : "INTERNAL_ERROR";
-  const status = code === "RATE_LIMITED" ? 429 : code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
+  const status = code === "RATE_LIMITED" ? 429 : code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" || code === "CLAIM_JOB_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
   console.error(JSON.stringify({
     event: "request_failed",
     requestId: c.get("requestId"),
@@ -286,6 +303,86 @@ async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Prom
     throw error;
   }
 }
+function pruneClaimCreationJobs(now = Date.now()) {
+  for (const [id, job] of claimCreationJobs) {
+    if (job.status !== "running" && now - job.startedAt >= CLAIM_JOB_TTL_MS) claimCreationJobs.delete(id);
+  }
+}
+function makeRoomForClaimCreationJob() {
+  while (claimCreationJobs.size >= MAX_CLAIM_JOBS) {
+    const oldestFinished = [...claimCreationJobs.values()].find((job) => job.status !== "running");
+    if (!oldestFinished) break;
+    claimCreationJobs.delete(oldestFinished.id);
+  }
+  return claimCreationJobs.size < MAX_CLAIM_JOBS;
+}
+function publicClaimCreationJob(job: ClaimCreationJob) {
+  return {
+    jobId: job.id,
+    status: job.status,
+    stage: job.stage,
+    claim: job.claim ?? undefined,
+    error: job.error ?? undefined,
+  };
+}
+async function createClaimWithSnapshot(input: CreateClaimInput, signal: AbortSignal, requestId: string, onStage: (stage: string) => void) {
+  onStage("snapshot_resolution");
+  const snapshot = await resolveSnapshot(input.snapshotHeight, signal, requestId);
+  const nonce = crypto.getRandomValues(new Uint8Array(32));
+  const statement = {
+    networkId: config.NETWORK_ID,
+    assetId: input.assetId.toLowerCase(),
+    threshold: input.threshold,
+    snapshotHeight: input.snapshotHeight,
+    commitmentRoot: snapshot.commitmentRoot,
+    exclusionRoot: snapshot.exclusionRoot,
+    expiresAt: input.expiresAt,
+    creatorNonce: Array.from(nonce, (v) => v.toString(16).padStart(2, "0")).join("")
+  };
+  onStage("claim_derivation");
+  const derived = await deriveClaim(statement, signal);
+  if (signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+  onStage("sqlite_insert");
+  return saveClaim(input, {
+    id: derived.claimId!, networkId: config.NETWORK_ID, commitmentRoot: statement.commitmentRoot,
+    exclusionRoot: statement.exclusionRoot, claimDomain: derived.claimDomain!, creatorNonce: statement.creatorNonce
+  }, Math.floor(Date.now() / 1000));
+}
+function startClaimCreationJob(input: CreateClaimInput, requestId: string): ClaimCreationJob {
+  const id = randomUUID();
+  const job: ClaimCreationJob = {
+    id, requestId, status: "running", stage: "snapshot_resolution", snapshotHeight: input.snapshotHeight, startedAt: Date.now(),
+    controller: new AbortController(), claim: null, error: null, deadlineExceeded: false,
+  };
+  claimCreationJobs.set(id, job);
+  activeClaimCreationJobId = id;
+  const deadline = setTimeout(() => {
+    job.deadlineExceeded = true;
+    job.controller.abort();
+  }, ROUTE_DEADLINE_MS);
+  void (async () => {
+    try {
+      job.claim = await createClaimWithSnapshot(input, job.controller.signal, requestId, (stage) => { job.stage = stage; });
+      if (job.status !== "cancelled") {
+        job.status = "completed";
+        console.info(JSON.stringify({ event: "claim_creation_job_completed", requestId, jobId: id, stage: job.stage, snapshotHeight: input.snapshotHeight, durationMs: Date.now() - job.startedAt }));
+      }
+    } catch (error) {
+      if (job.status !== "cancelled") {
+        const candidate = error instanceof Error ? error.message : "";
+        const code = Object.hasOwn(messages, candidate) ? candidate : "INTERNAL_ERROR";
+        job.status = "failed";
+        job.error = { code, message: messages[code] ?? "An internal error occurred." };
+        console.error(JSON.stringify({ event: "claim_creation_job_failed", requestId, jobId: id, stage: job.stage, snapshotHeight: input.snapshotHeight, errorCode: code, failureCategory: job.deadlineExceeded ? "job_deadline" : job.controller.signal.aborted ? "job_cancelled" : "application_error", durationMs: Date.now() - job.startedAt }));
+      }
+    } finally {
+      clearTimeout(deadline);
+      if (activeClaimCreationJobId === id) activeClaimCreationJobId = undefined;
+    }
+  })();
+  console.info(JSON.stringify({ event: "claim_creation_job_started", requestId, jobId: id, snapshotHeight: input.snapshotHeight }));
+  return job;
+}
 app.get("/api/v1/claims", (c) => {
   const parsed = Number(c.req.query("limit") ?? 20);
   const limit = Number.isFinite(parsed) ? Math.max(1, Math.min(100, Math.trunc(parsed))) : 20;
@@ -308,6 +405,44 @@ app.get("/api/v1/claims/:id", (c) => {
   if (!claim || (config.HOROI_DEMO_MODE && !isDemoClaim(claim.id))) throw new Error("CLAIM_NOT_FOUND");
   return c.json({ claim });
 });
+app.post("/api/v1/claims/jobs", async (c) => {
+  if (config.HOROI_DEMO_MODE) throw new Error("DEMO_READ_ONLY");
+  setStage(c, "request_validation");
+  const parsed = createClaimSchema.safeParse(await parseJsonBody(c));
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+    throw new Error(field === "assetId" ? "INVALID_ASSET_ID" : field === "threshold" ? "INVALID_THRESHOLD" : field === "snapshotHeight" ? "INVALID_SNAPSHOT" : "BAD_REQUEST");
+  }
+  const input = parsed.data;
+  c.set("snapshotHeight", input.snapshotHeight);
+  await withRouteDeadline(c, async (signal) => {
+    setStage(c, "asset_id_validation");
+    await validateAssetId(input.assetId, signal);
+  });
+  if (activeClaimCreationJobId) return c.json({ error: { code: "RATE_LIMITED", message: messages.RATE_LIMITED, requestId: c.get("requestId") } }, 429, { "Retry-After": "2" });
+  const admission = admitSnapshotCreation(c);
+  if (admission) return admission;
+  pruneClaimCreationJobs();
+  if (!makeRoomForClaimCreationJob()) return c.json({ error: { code: "RATE_LIMITED", message: messages.RATE_LIMITED, requestId: c.get("requestId") } }, 429, { "Retry-After": "2" });
+  const job = startClaimCreationJob(input, c.get("requestId"));
+  return c.json(publicClaimCreationJob(job), 202);
+});
+app.get("/api/v1/claims/jobs/:id", (c) => {
+  pruneClaimCreationJobs();
+  const job = claimCreationJobs.get(c.req.param("id"));
+  if (!job) throw new Error("CLAIM_JOB_NOT_FOUND");
+  return c.json(publicClaimCreationJob(job));
+});
+app.post("/api/v1/claims/jobs/:id/cancel", (c) => {
+  const job = claimCreationJobs.get(c.req.param("id"));
+  if (!job) throw new Error("CLAIM_JOB_NOT_FOUND");
+  if (job.status === "running") {
+    job.status = "cancelled";
+    job.controller.abort();
+    console.info(JSON.stringify({ event: "claim_creation_job_cancelled", requestId: job.requestId, jobId: job.id, stage: job.stage, snapshotHeight: job.snapshotHeight, durationMs: Date.now() - job.startedAt }));
+  }
+  return c.json(publicClaimCreationJob(job));
+});
 app.post("/api/v1/claims", async (c) => {
   if (config.HOROI_DEMO_MODE) throw new Error("DEMO_READ_ONLY");
   setStage(c, "request_validation");
@@ -324,26 +459,7 @@ app.post("/api/v1/claims", async (c) => {
     setStage(c, "snapshot_admission");
     const admission = admitSnapshotCreation(c);
     if (admission) return admission;
-    setStage(c, "snapshot_resolution");
-    const snapshot = await resolveSnapshot(input.snapshotHeight, signal, c.get("requestId"));
-    const nonce = crypto.getRandomValues(new Uint8Array(32));
-    const statement = {
-      networkId: config.NETWORK_ID,
-      assetId: input.assetId.toLowerCase(),
-      threshold: input.threshold,
-      snapshotHeight: input.snapshotHeight,
-      commitmentRoot: snapshot.commitmentRoot,
-      exclusionRoot: snapshot.exclusionRoot,
-      expiresAt: input.expiresAt,
-      creatorNonce: Array.from(nonce, (v) => v.toString(16).padStart(2, "0")).join("")
-    };
-    setStage(c, "claim_derivation");
-    const derived = await deriveClaim(statement, signal);
-    setStage(c, "sqlite_insert");
-    const claim = saveClaim(input, {
-      id: derived.claimId!, networkId: config.NETWORK_ID, commitmentRoot: statement.commitmentRoot,
-      exclusionRoot: statement.exclusionRoot, claimDomain: derived.claimDomain!, creatorNonce: statement.creatorNonce
-    }, Math.floor(Date.now() / 1000));
+    const claim = await createClaimWithSnapshot(input, signal, c.get("requestId"), (stage) => setStage(c, stage));
     return c.json({ claim }, 201);
   });
 });

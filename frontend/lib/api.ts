@@ -4,6 +4,13 @@ export interface Claim {
   exclusionRoot: string; claimDomain: string; creatorNonce: string; expiresAt: number | null; createdAt: number;
   status: "active" | "expired";
 }
+export interface ClaimCreationJob {
+  jobId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stage: string;
+  claim?: Claim;
+  error?: { code: string; message: string };
+}
 export interface PublicOrchardAction {
   nullifier: string;
   cmx: string;

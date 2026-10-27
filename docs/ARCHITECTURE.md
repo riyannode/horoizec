@@ -50,7 +50,9 @@ The standalone public Compose project `horoi-public` has separate live and demo 
 
 ## Proof flow
 
-A creator sends public name, description, ZIP 227 AssetId bytes, threshold, snapshot height, and optional expiry. The backend validates the AssetId, reads the Orchard commitment root and canonical public Orchard nullifiers from the selected chain history, derives the exclusion root, then stores immutable claim metadata including network identity and a random creator nonce.
+The browser create form sends public name, description, ZIP 227 AssetId bytes, threshold, snapshot height, and optional expiry to the live backend's bounded claim-job route. It receives a job ID, polls status, and can explicitly cancel the job. The in-process job has a 14-minute deadline, uses the same canonical network/genesis, snapshot hash/root, reorg, claim-derivation, and SQLite insertion path as synchronous `POST /claims`, and keeps status in memory for up to 30 minutes. A backend restart loses job status; it does not move or substitute the snapshot.
+
+A creator's request is validated before snapshot admission. The backend reads the Orchard commitment root and canonical public Orchard nullifiers from the selected chain history, derives the exclusion root, then stores immutable claim metadata including network identity and a random creator nonce.
 
 A holder provides a test-only spending key in the claim page. The browser fetches public action ranges and public issuance fields. WASM reconstructs issuance notes, checks commitments, decrypts candidate outputs, computes commitment and exclusion witnesses, and creates a one-note proof locally. The browser submits the proof bundle and circuit-derived alternate nullifier. It does not send the key, viewing key, decrypted notes, witness, exact balance, or queried holder nullifier.
 

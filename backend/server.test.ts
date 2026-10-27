@@ -57,7 +57,7 @@ describe("claim status filtering", () => {
 });
 
 describe("malformed JSON request bodies", () => {
-  it.each(["/api/v1/claims", "/api/v1/proofs/verify"])("returns BAD_REQUEST for %s", async (path) => {
+  it.each(["/api/v1/claims", "/api/v1/claims/jobs", "/api/v1/proofs/verify"])("returns BAD_REQUEST for %s", async (path) => {
     const response = await server.fetch(new Request(`http://localhost${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -66,6 +66,18 @@ describe("malformed JSON request bodies", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: "BAD_REQUEST" } });
+  });
+});
+
+describe("claim creation jobs", () => {
+  it("returns a stable not-found error for an unknown job and cancellation", async () => {
+    const status = await server.fetch(new Request("http://localhost/api/v1/claims/jobs/missing"));
+    expect(status.status).toBe(404);
+    expect(await status.json()).toMatchObject({ error: { code: "CLAIM_JOB_NOT_FOUND" } });
+
+    const cancel = await server.fetch(new Request("http://localhost/api/v1/claims/jobs/missing/cancel", { method: "POST" }));
+    expect(cancel.status).toBe(404);
+    expect(await cancel.json()).toMatchObject({ error: { code: "CLAIM_JOB_NOT_FOUND" } });
   });
 });
 
@@ -124,6 +136,20 @@ describe("snapshot creation admission", () => {
     }));
     expect(invalidAsset.status).toBe(400);
     expect(await invalidAsset.json()).toMatchObject({ error: { code: "INVALID_ASSET_ID" } });
+
+    const invalidAssetJob = await server.fetch(new Request("http://localhost/api/v1/claims/jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Invalid asset job",
+        assetId: "00".repeat(66),
+        threshold: "1",
+        snapshotHeight: 1,
+        expiresAt: null,
+      }),
+    }));
+    expect(invalidAssetJob.status).toBe(400);
+    expect(await invalidAssetJob.json()).toMatchObject({ error: { code: "INVALID_ASSET_ID" } });
   });
 });
 

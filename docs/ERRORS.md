@@ -14,6 +14,7 @@ HTTP errors use { "error": { "code": "...", "message": "...", "requestId": "..."
 | DEMO_READ_ONLY | 403 | Docker demo mode permits only its pinned claim and fixture routes. | Docker demo mode exposes only its pinned claim fixture. | Use the local development mode for chain-backed operations. |
 | RATE_LIMITED | 429 | A crypto, action-range, or snapshot-creation admission limit was reached; retry after the `Retry-After` interval. | The verifier is busy. Try again shortly. | Check traffic and the relevant per-process limit. |
 | CLAIM_NOT_FOUND | 404 | No claim has that ID; retry only with corrected ID. | The claim was not found. | Check local DB and ID. |
+| CLAIM_JOB_NOT_FOUND | 404 | The in-memory claim creation job is unknown, expired, or lost after backend restart; do not retry the same job ID. | The claim creation job was not found. | Check backend process health; create a new job only after confirming no claim was persisted. |
 | CLAIM_EXPIRED | 410 | Expiry has passed; create a new claim. | The claim has expired. | Check expiry configuration. |
 | SNAPSHOT_STALE | 409 | Stored roots or network no longer match active chain; create a new claim. | The claim snapshot no longer matches the active chain. | Check for reset, reorg, or DB/network mismatch. |
 | NULLIFIER_USED | 409 | Same alternate nullifier was already consumed in this claim; do not retry unchanged input. | These notes have already been used in this claim. | Check DB integrity if unexpected. |
