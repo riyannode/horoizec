@@ -44,13 +44,13 @@ The Judge fixture and public-demo `/demo` route remain synthetic. Historical pub
 
 ## Current release acceptance (2026-10-27)
 
-Source `d4569b424d0c16dab41614fda3d1f2c82d78279d` is deployed, and `backend-live`, `backend-demo`, and `frontend-public` are healthy. Both backend images use digest `sha256:e77308498b15d1217c7b6fefa4ae16f2dbfeffab92ff0c36362da42ce1f5388a`; `frontend-public` uses `sha256:3055962377126f5f717ea693650295829bf3258d2c9b83557376e757eb362bdf`. The root application routes to `backend-live`; `/demo` routes to the isolated synthetic backend. See [DEPLOYMENT.md](DEPLOYMENT.md) for the measured acceptance record.
+Diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f` is deployed, and `backend-live`, `backend-demo`, and `frontend-public` are healthy. Both backend images use image ID `sha256:f6bd059c7632c796c1f7d0c44f9bb6597241c9303769cb4859899c479d434c18`; `frontend-public` uses image ID `sha256:82df14adc68f4019f897784b7b0320712889d0ce76d0a7b4a982300b38d177a2`. The root application routes to `backend-live`; `/demo` routes to the isolated synthetic backend. The diagnostic source adds safe failure traces only; it does not change snapshot, RPC retry, or proof semantics. See [DEPLOYMENT.md](DEPLOYMENT.md) for the measured acceptance record.
 
 | Gate | Current evidence | Status |
 | --- | --- | --- |
 | Public-chain snapshot integration | Canonical QEDIT testnet genesis and NU7 were confirmed; a block 1 claim and action range succeeded. This is not holder eligibility. | Verified |
 | Synthetic Judge flow | Public `/demo` valid, tampered, and two independent replay walkthroughs passed. | Verified |
 | Fresh browser proof from an eligible live note | No new real-note proof was generated or submitted on this release. | Unverified |
-| Full cold-scan latency | No full scan benchmark was run for this release. | Unmeasured |
+| Full cold-scan latency | One diagnostic request was canceled at 30,002 ms during snapshot scanning; it did not complete. No benchmark was run. | Unmeasured |
 
-The local Judge also passed a fresh-clone Docker build and its fixture acceptance. The deployed-source and local-clone results establish the three-surface wiring and fixture behavior; they do not close the fresh live-proof gate.
+The local Judge passed `docker compose up --build` from a fresh public clone of default branch `feat/vercel-fullstack` at diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f`. Both containers became healthy, the proxied health endpoint returned HTTP 200 with `zebra-regtest`, and browser valid, tamper, and replay scenarios passed. Its task-created Compose resources were removed after the run. The deployed-source and local-clone results establish the three-surface wiring and fixture behavior; they do not close the fresh live-proof gate.

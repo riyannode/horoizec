@@ -42,7 +42,7 @@ A browser E2E recorded on 2026-10-25 accepted a real one-note HCP1 proof against
 
 This evidence covers one eligible note, not separate Alice/Bob holders. The `u64::MAX` `NoEligibleNote` run used the same test-wallet note data as a negative threshold case; it is not a second-holder demonstration. The proof does not aggregate multiple notes or support split notes.
 
-Cold snapshot latency is unresolved. The historical baseline recorded 509,443 ms. Later local-only runs completed in 840,604–919,090 ms, while a separate latest request exceeded the 900,000 ms client boundary without an HTTP response; its server completion time was not captured. These runs were not a controlled comparison, so no reliable cold-path latency is claimed. The full public browser scan used 475 action-range requests and took about 1,410,512 ms. See the evidence report for measurements and limits.
+Cold snapshot reliability is unresolved. Historical runs completed in 509,443–919,090 ms, and the historical full browser scan used 475 action-range requests over about 1,410,512 ms. A new diagnostic browser request on 2026-10-27 was canceled after 30,002 ms during `snapshot_scan`, with the backend recording an upstream request close and Next.js logging `ECONNRESET`; it did not complete a snapshot. The configured backend and Next.js deadlines were longer, and the exact timer owner remains unproven. These runs are not a controlled comparison, so no cold-path performance guarantee is claimed. See the evidence report for the safe trace and limits.
 
 The protocol is experimental and unaudited; do not use real funds. Mainnet is disabled.
 

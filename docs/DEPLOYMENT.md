@@ -29,7 +29,7 @@ Configure the existing proxy's Horoi hostname to forward HTTPS traffic to the lo
 
 Stop or reset only the public project with `docker compose -f docker-compose.public.yml down` (preserves its volumes) or append `-v` when an authorized full reset is intended. Do not use Docker prune commands.
 
-## Current three-surface release and acceptance (2026-10-27)
+## Earlier three-surface release and acceptance (2026-10-27)
 
 The deployed application source is `d4569b424d0c16dab41614fda3d1f2c82d78279d`, pushed to the existing `feat/vercel-fullstack` branch. All three public Compose services are healthy and carry that source revision label:
 
@@ -48,6 +48,21 @@ The public browser rendered the valid, tampered, and replay scenarios at `/demo`
 Live SQLite contains the one `zsa-testnet` integration claim and no nullifiers. The demo volume contains its existing `zebra-regtest` fixture claim and one pre-existing nullifier; repeated replay walkthroughs left both database counts unchanged. The Caddyfile remained byte-identical at SHA-256 `f454b12506d1d5cfe2bd84772d067333e83f061d47fa526d1e7e7784af3e1c9d`; the existing frontend-public edge attachment was retained, and neither Caddy nor UNMET was recreated. UNMET `/`, `/health`, `/ready`, `/live`, and `/v1/demands` returned HTTP 200 before and after; container, environment, image, and mount fingerprints were unchanged, and its payment volume was untouched. The legacy Horoi fixture backend was stopped and retained for rollback.
 
 The local Judge was also built and run from a fresh GitHub clone of this source revision. `docker compose up --build` completed with two healthy containers and no `.env`, host artifacts, keys, or RPC service. Valid, tampered, and two replay walkthroughs passed. An isolated project namespace was used to preserve pre-existing local resources; project reset and SQLite persistence across backend restart were verified in isolated local projects. Full acceptance records are in the task evidence bundle; this docs update does not change deployed application code.
+
+## Current diagnostic deployment (2026-10-27)
+
+The safe diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f` is deployed from the existing `feat/vercel-fullstack` branch. The backend/frontend image labels match this commit:
+
+| Service | Image ID | Published port |
+| --- | --- | --- |
+| `backend-live` and `backend-demo` | `sha256:f6bd059c7632c796c1f7d0c44f9bb6597241c9303769cb4859899c479d434c18` | None |
+| `frontend-public` | `sha256:82df14adc68f4019f897784b7b0320712889d0ce76d0a7b4a982300b38d177a2` | `127.0.0.1:3001` |
+
+The backend change adds failure-only structured diagnostics for route stage, RPC method/attempt/duration, safe failure category, snapshot height, and abort state. RPC retry counts/timeouts, the route and snapshot deadlines, canonical genesis and reorg checks, root derivation, HCP1 semantics, and API error codes are unchanged. The change does not fix the 30-second cancellation.
+
+After deployment, public `/api/v1/health`, `/create`, `/claims`, and `/demo` returned HTTP 200. The live and demo SQLite databases both passed `PRAGMA integrity_check`; live remained at one claim and zero nullifiers, and demo at one claim and one nullifier. The public synthetic demo returned valid fixture `true`, tampered fixture `false` / `INVALID_PROOF`, and replay `NULLIFIER_USED`. The five configured UNMET endpoints returned HTTP 200, the UNMET containers remained healthy, and the Caddyfile SHA-256 remained `f454b12506d1d5cfe2bd84772d067333e83f061d47fa526d1e7e7784af3e1c9d`; neither UNMET nor Caddy was recreated.
+
+One browser claim attempt at snapshot 7596 returned backend HTTP 503 after 30,002 ms. Instrumentation recorded `snapshot_scan`, `getblockhash` at block 384, then `request_closed` / `parent_abort`. Next.js 16.4.0 logged `ECONNRESET`; its deployed `experimental.proxyTimeout` was 900,000 ms. The Horoi Caddy site has no short proxy timeout. The exact owner of the upstream 30-second connection close remains unproven. No additional full scan was run after the trace; see [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
 
 ## Historical pre-correction HTTPS acceptance (2026-10-27)
 

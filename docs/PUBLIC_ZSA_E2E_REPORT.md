@@ -31,7 +31,7 @@ The successful browser scan used 475 API range requests, 16 blocks per range (la
 
 Separately, an earlier bounded RPC diagnostic scanned 7,592 blocks: 15,190 RPC attempts, one successful retry, no exhausted retries, 580.3 seconds, 408,759,053 response bytes, and 133,176 KiB peak RSS. These are diagnostic measurements from that scan and should not be conflated with browser API request counts. No failed range or chain-consistency mismatch occurred in the successful browser scans.
 
-The initial claim-creation frontend request exposed a 30-second Next.js rewrite proxy timeout: the backend took 563,147 ms and persisted the claim, while the frontend proxy reset the response. The installed Next.js 16.4 runtime confirmed its rewrite proxy timeout default is 30,000 ms. `frontend/next.config.ts` now sets `experimental.proxyTimeout` to 900,000 ms, exceeding the measured request. This avoids the observed response reset without changing the API or chain-validation logic.
+The initial claim-creation frontend request exposed a 30-second Next.js rewrite proxy timeout: the backend took 563,147 ms and persisted the claim, while the frontend proxy reset the response. The installed Next.js 16.4 runtime confirmed its rewrite proxy timeout default is 30,000 ms. `frontend/next.config.ts` now sets `experimental.proxyTimeout` to 900,000 ms, exceeding the measured request and removing that measured boundary for the historical run. A separate 2026-10-27 request still closed after 30 seconds; its timer owner remains unproven below.
 
 ## Submission stabilization: cold path and evidence boundaries
 
@@ -55,22 +55,22 @@ The public browser E2E's 475-range complete scan took about 1,410,512 ms and use
 
 The local-only Worker follow-up is preserved separately and is not part of the stable PR head or the historical positive E2E. A real-note Worker scan returned `PROOF_GENERATION_FAILED` before generating or submitting a proof. It therefore did not establish positive Worker proof validity, stateless verification, replay, tamper rejection, cancellation, or duplicate-submission acceptance. An inspected attempt showed same-origin Worker/WASM loading and no private key, decrypted note, balance, or witness in observed network requests or logs; storage, cancellation, duplicate interactions, and sustained responsiveness were not fully validated. Do not present the Worker as passing.
 
-## PRD §24 acceptance status for the stable baseline
+## Historical PRD §24 acceptance snapshot for the stable baseline
 
 | Criterion | Status | Evidence boundary |
 | --- | --- | --- |
-| A. Repository | PASS | The repository uses only the documented `backend/`, `frontend/`, and `docs/` project directories. |
-| B. ZSA | RECORDED PASS | The public QEDIT testnet identity and snapshot 7596 were checked during the historical E2E. |
-| C. Claim | RECORDED PASS | The historical browser proof was accepted for an immutable claim at snapshot 7596. |
-| D. Privacy | RECORDED PASS | The E2E record says the submit body and stored state were inspected; no private witness values were found. Not independently rerun in this stabilization. |
-| E. Proof | RECORDED PASS | One real eligible note produced the accepted HCP1 proof; no multi-note support is claimed. |
-| F. Verification | RECORDED PASS | Historical stateless valid/tampered checks and Rust adversarial wrong-asset/wrong-snapshot cases are recorded. |
-| G. Replay | RECORDED PASS | Identical accepted submission returned HTTP 409 `NULLIFIER_USED`. |
-| H. Domain separation | RECORDED PASS | The same note produced a distinct alternate nullifier under a second claim domain. |
-| I. Browser | RECORDED PASS | The public one-note flow was exercised in ChatGPT Browser; exact runtime checkout SHA was not captured. |
-| J. Build | PASS IN THIS TURN | The Rust, backend, and frontend commands listed in the stabilization validation section below were rerun on the stable source plus minimal local API/docs alignment changes. |
-| K. Documentation | PASS AFTER THIS CHANGE | PRD, API, README, HACKATHON, CRYPTO, SETUP, and this report now distinguish observed results from limitations. |
-| L. Honesty | PASS AFTER THIS CHANGE | One-note scope, the negative `u64::MAX` test, cold latency, and the absence of a demonstrated public Alice/Bob pair are explicit. |
+| A. Repository | `PASS_HISTORICAL_ONLY` | The earlier stable baseline used the documented `backend/`, `frontend/`, and `docs/` project directories. |
+| B. ZSA | `PASS_HISTORICAL_ONLY` | The public QEDIT testnet identity and snapshot 7596 were checked during the historical E2E. |
+| C. Claim | `PASS_HISTORICAL_ONLY` | The historical browser proof was accepted for an immutable claim at snapshot 7596. |
+| D. Privacy | `PASS_HISTORICAL_ONLY` | The E2E record says the submit body and stored state were inspected; no private witness values were found. |
+| E. Proof | `PASS_HISTORICAL_ONLY` | One real eligible note produced the accepted HCP1 proof; no multi-note support is claimed. |
+| F. Verification | `PASS_HISTORICAL_ONLY` | Historical stateless valid/tampered checks and Rust adversarial wrong-asset/wrong-snapshot cases are recorded. |
+| G. Replay | `PASS_HISTORICAL_ONLY` | Identical accepted submission returned HTTP 409 `NULLIFIER_USED`. |
+| H. Domain separation | `PASS_HISTORICAL_ONLY` | The same note produced a distinct alternate nullifier under a second claim domain. |
+| I. Browser | `PASS_HISTORICAL_ONLY` | The public one-note flow was exercised in ChatGPT Browser; exact runtime checkout SHA was not captured. |
+| J. Build | `PASS_HISTORICAL_ONLY` | The stable-baseline Rust, backend, and frontend commands are retained in the earlier validation record. Current checks are listed in the current matrix below. |
+| K. Documentation | `PASS_HISTORICAL_ONLY` | The earlier record reconciled the PRD, API, README, HACKATHON, CRYPTO, SETUP, and report docs. |
+| L. Honesty | `PASS_HISTORICAL_ONLY` | The earlier record disclosed one-note scope, the negative `u64::MAX` test, cold latency, and no demonstrated public Alice/Bob pair. |
 
 The historical criteria above are recorded prior-task evidence, not a fresh browser E2E. Cold snapshot reliability remains a submission limitation even though cold latency is not a separate lettered §24 criterion.
 
@@ -172,18 +172,18 @@ The test images were tagged `horoi/horoi-backend:unknown` and `horoi/horoi-front
 
 | Criterion | Status | Evidence boundary |
 | --- | --- | --- |
-| A. Repository shape | VERIFIED | The project remains limited to `backend/`, `frontend/`, and `docs/` plus root configuration. Phase 2 Worker work remains on its separate preserved branch. |
-| B. ZSA network | RECORDED | Historical public QEDIT testnet identity and snapshot evidence is preserved above. The Docker fixture is explicitly local synthetic regtest data. |
-| C. Immutable claim | VERIFIED | The fixture statement binds network/protocol, ZIP 227 AssetId, threshold, snapshot roots, and claim domain; the selected statement is rendered in the public browser. |
-| D. Privacy | VERIFIED LOCALLY | The hosted fixture API receives only scenario or fixture ID inputs and returns public statement/result data; runtime image and log scans are recorded above. Historical public-testnet request inspection remains separate. |
-| E. Proof | RECORDED | One-note public-testnet proof acceptance is historical evidence. The hosted judge proof is a distinct public synthetic fixture; no aggregate or multi-note scope is claimed. |
-| F. Verification | VERIFIED | The deployed native Rust verifier accepted the genuine fixture and rejected a one-byte mutation with `INVALID_PROOF`. Historical public-testnet verification remains separately recorded. |
-| G. Replay | VERIFIED | The public walkthrough verifies the proof twice against a fresh request-local SQLite database; first acceptance and `NULLIFIER_USED` rejection were observed on repeated external requests. Historical public-testnet duplicate submission returned HTTP 409. |
-| H. Domain separation | RECORDED | The historical public E2E recorded distinct alternate nullifiers for one note under different claim domains. Not newly exercised by the synthetic fixture. |
-| I. Browser flow | PARTIAL | The public HTTPS browser currently exercises `/demo`, API routing, genuine fixture verification, tamper rejection, and replay. Browser-local proving with a real public-testnet note is historical evidence, not newly generated during this deployment check. |
-| J. Build and checks | VERIFIED | Rust, Bun backend, frontend, Compose config, and no-cache x86_64 production image build passed; exact commands are in this report and `docs/TESTING.md`. |
-| K. Documentation | VERIFIED | Judge fixture provenance, Docker/public trust boundaries, API behavior, rate limits, verified HTTPS deployment, and historical E2E evidence are documented separately. |
-| L. Claim accuracy | VERIFIED | Historical public-testnet proof, local synthetic fixture verification, and unsupported capabilities are distinguished; no local fixture is described as public QEDIT E2E. |
+| A. Repository shape | `PASS_CURRENTLY_VERIFIED` | Tracked source is organized under `backend/`, `frontend/`, and `docs/`; root Compose files define the separate Judge and public profiles. The preserved Phase 2 Worker commit remains on its WIP branch. |
+| B. Compatible pinned ZSA environment | `PARTIAL` | The live RPC reports `chain=test`, QEDIT genesis `f41f61dd…9505756`, active NU7, Zebra 5.2.0/protocol 170160, and a canonical snapshot-7596 hash/root. Current RPC does not reveal the running Zebra Git revision. QEDIT tooling source pins are linked in the fresh-attempt record below. |
+| C. Immutable claim | `PASS_CURRENTLY_VERIFIED` | Live claim `401cdcfbe89267bd9daa18e668349986388a5a1a44b77a7c3c8bb6cb6778d44d` binds the ZIP 227 AssetId, threshold 100, and canonical block-1 roots. The failed snapshot-7596 creation did not persist a claim. |
+| D. Browser-local privacy | `PASS_HISTORICAL_ONLY` | The 2026-10-25 public-testnet proof submit body was inspected and contained no spending key, note, balance, or witness. The 2026-10-27 attempt entered no key and submitted no proof. |
+| E. Real ownership proof | `PASS_HISTORICAL_ONLY` | The historical one-note public-testnet HCP1 proof was accepted and independently verified. No new proof was generated on the current deployed release; `/demo` remains a synthetic fixture. |
+| F. Verification and tamper rejection | `PASS_CURRENTLY_VERIFIED` | The current hosted `/demo` and clean-archive Docker Judge accepted the valid fixture and rejected its tampered proof; the Rust verifier test also rejects wrong AssetId and snapshot inputs. This does not establish a new real-note proof. |
+| G. Note-level replay protection | `PASS_CURRENTLY_VERIFIED` | The current hosted demo and clean-archive Docker Judge each accepted the first synthetic submission and rejected its duplicate with `NULLIFIER_USED` using isolated SQLite and the production unique constraint. The real-note public replay result remains historical. |
+| H. Claim-domain separation | `PASS_CURRENTLY_VERIFIED` | Current `cargo +1.99.1 test --locked` passed all 18 Rust tests, including claim-domain and alternate-nullifier separation cases. |
+| I. Complete browser E2E | `PASS_HISTORICAL_ONLY` | The complete real-note browser flow is recorded for 2026-10-25 only. The fresh 2026-10-27 snapshot-7596 claim attempt returned backend HTTP 503 after 30,002 ms; the list remained unchanged, so current proof, stateless verification, replay, and tamper steps did not run. |
+| J. Required checks and builds | `PASS_CURRENTLY_VERIFIED` | Diagnostic source `9271067` passed backend typecheck/build and 13 tests (127 assertions), frontend check/build, Rust fmt/check/18 tests/release build, Compose configuration, and production image builds. A clean public clone of default branch `feat/vercel-fullstack` at exactly `92710678a2efad1b27552e9345c41036a604ed3f` passed `docker compose up --build`, health HTTP 200, and browser valid/tamper/replay scenarios. |
+| K. Documentation consistency | `PASS_CURRENTLY_VERIFIED` | This report, `HACKATHON.md`, `THREE_SURFACES.md`, and deployment docs distinguish live, historical, and synthetic evidence. |
+| L. Testnet and product disclosures | `PASS_CURRENTLY_VERIFIED` | The docs and UI disclose testnet-only, experimental/unaudited, one-note, note-level replay, no mainnet, and synthetic-fixture limitations. |
 
 ## Separate public Docker deployment acceptance (2026-10-27)
 
@@ -200,3 +200,39 @@ This is current deployment evidence for the Docker Judge Demo fixture. It is not
 | Release identity | PASS | Public backend/frontend labels identify source `d6cc100968aa9975930d71213439d2b3c9c5dd01`. Backend image digest is `sha256:d7b76c5b7d1c18760b7df4e1a3623532cb3f7069e3365165505267e56b6dde5e`; frontend digest is `sha256:7c0f5ad19d334402bd2e76dfa2173b5026bf54a4ae5c8356a869ac27dd6fde25`. |
 
 The public working demo requirement is now met by the verified Docker URL [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo). The historical public QEDIT testnet proof remains distinct from the deployed synthetic fixture walkthrough.
+
+## Fresh public QEDIT attempt (2026-10-27)
+
+This attempt supplements the historical 2026-10-25 proof record; it does not replace or extend it.
+
+### Network and toolchain checks
+
+Read-only checks from the live backend container against `https://rpc.test-zsa.org` reported `chain=test`, tip height 8433 (`a088b41463c8382f662d3176ab8f2c7b0d9f73e88e4d0e6b332662b4676a4192`), expected genesis `f41f61ddf9610ae40f519ad2e9e543e065ef0357eeecf5a4cc08a765d9505756`, active NU7, `/Zebra:5.2.0/`, protocol 170160, and no warnings. Snapshot 7596 still resolves to hash `117825b695547d089c056686db855cdb63fadc279a9c2ab39b713eb6f656a457` and Orchard root `6eec05f584ea828d325ffd69d4d34b91e85f4db9fe16d6d727a381ecb009f610`.
+
+At the checked snapshot and tip-adjacent blocks, `getblock` returned version-6 transactions with Orchard actions. The live backend's bounded action-range API returned HTTP 200 for blocks 1–16 (16 blocks, 40 Orchard actions), block 7596 (2 Orchard actions), and the then-current tip block 8430 (2 Orchard actions). These targeted reads verify those data paths only; they do not demonstrate that the full snapshot scan completes or that those blocks contain ZIP 227 issuance notes.
+
+The checked-out [QEDIT transaction-tool source](https://github.com/QED-it/zcash_tx_tool) was commit `45413e8a9159bfeb6a9ca829c72f315a49266bc6`; its CI compatibility pin references [QED-it/Zebra `8c9c93f`](https://github.com/QED-it/zebra/commit/8c9c93fdd91b89fab387ec68362a93b2baca7bab). The public RPC identifies Zebra 5.2.0 but does not expose the deployed Git commit, so the exact running revision remains unverified. ZIP 226/227 remain draft specifications: [ZIP 226](https://zips.z.cash/zip-0226), [ZIP 227](https://zips.z.cash/zip-0227).
+
+### Issuance and transfer paths inspected
+
+The current [QEDIT `zcash_tx_tool`](https://github.com/QED-it/zcash_tx_tool) source exposes `test-issue-one`; its public workflow defaults to `rpc.test-zsa.org`. QEDIT's [October 6, 2026 tooling update](https://forum.zcashcommunity.com/t/feature-branch-testnet-and-compatible-developer-tooling/55156/4) identifies tx-tool v0.6.0 as compatible with Zebra 5.2.0. Its older wiki endpoint `dev.zebra.zsa-test.net` is stale for this network and was not used.
+
+The live [Cachet mint page](https://cachetzec.com/mint) identifies its target as the QEDIT-operated public ZSA testnet and offers browser issuance. It keeps the seed and proof local and relays only signed transaction bytes. The checked-out [Cachet source](https://github.com/cachet-zec/cachet) builds a zero-fee issuance for the public testnet and derives its Orchard account key using the same ZIP-32 seed path documented as matching tx-tool. Horoi accepts a raw 32-byte Orchard spending key, so the format is source-level compatible; no real wallet key or minted note was exercised in this attempt. No faucet was assumed or used.
+
+No asset was issued or transferred: the new live claim request failed before a claim was created, so an on-chain test note could not be used in the required proof flow. This avoids leaving an unnecessary public issuance behind. The published tx-tool sample seed and keys derived from it were not used on the public network.
+
+### New claim creation attempt
+
+From the real public `/create` page, a new request targeted the recorded ZIP 227 AssetId, threshold 100, and snapshot height 7596. The UI showed “Resolving snapshot…” and then reported that the response body began with plain-text `Internal Server Error`. The instrumented live backend recorded request ID `a440192c-32ff-406f-8b73-f56e70b679e1`, route `POST /api/v1/claims`, HTTP 503 after 30,002 ms, stage `snapshot_resolution`, snapshot height 7596, error code `SNAPSHOT_UNAVAILABLE`, failure category `request_closed`, and `aborted=true`. The snapshot scan log recorded an in-flight `getblockhash` attempt at block 384, aborted by its parent after 738 ms. The scan failed after 29,992 ms with `parent_abort`; RPC did not return an upstream HTTP error or invalid response. The browser displayed the Next.js plain-text 500 as a JSON parse error. The public claims list stayed unchanged with only the earlier block-1 integration claim. No new claim ID or roots were returned; no key was entered, and no HCP1 proof, replay request, or tamper request was made.
+
+The prior uninstrumented request ID was `f4a97252-69b1-4a5d-96fe-9c68e4f8d9ba`; it also returned backend HTTP 503 at 30,002 ms but lacked a stage trace. The new request establishes that this failure was not the three 10-second RPC attempts exhausting their own timeout: the live scan was canceled by the parent request while one `getblockhash` call was in flight. `backend/server.ts` sets a 14-minute route deadline and `backend/zcash.ts` sets a 12-minute snapshot deadline. The running Next.js 16.4.0 image has `experimental.proxyTimeout=900000`; its proxy logs `ECONNRESET` and emits the plain-text body. The Caddyfile in the healthy `unmet-web` container matches SHA-256 `f454b12506d1d5cfe2bd84772d067333e83f061d47fa526d1e7e7784af3e1c9d`; the Horoi site block has no short proxy timeout. The trace records a request close and parent abort but emits no upstream HTTP status, so it does not show an RPC HTTP error or invalid RPC response. These observations locate the failure at an upstream connection close, but do not identify which client/network timer closes it at 30 seconds. No timeout was increased and no scan was repeated after this trace.
+
+An isolated Bun 1.4.3 idle-timeout probe inside the backend image closed a synthetic 40-second handler at about 12 seconds, so Bun's default idle timeout does not explain this observed 30-second boundary. It did not touch the live backend process or databases.
+
+### Current Docker Judge verification
+
+The committed source archive at `80f9f3da2c278a0bcb4f48bf910a8136fd10e30f` built the zero-credential Docker Judge images. Both containers became healthy. On local `localhost:3000/demo`, the valid fixture returned HTTP 200/`valid: true`; tampering returned HTTP 200/`valid: false` with `INVALID_PROOF`; the replay walkthrough accepted the first fixture submission and rejected the duplicate with `NULLIFIER_USED` in isolated SQLite. The same three scenarios were observed on public `/demo`.
+
+After the diagnostic source was pushed, a fresh unauthenticated clone of public default branch `feat/vercel-fullstack` at `92710678a2efad1b27552e9345c41036a604ed3f` ran the required `docker compose up --build`. Both containers became healthy; `/api/v1/health` returned HTTP 200 with `network: zebra-regtest`. In the ChatGPT in-app browser at `http://127.0.0.1:3000/demo`, the valid fixture returned HTTP 200/`valid: true`, tampering returned HTTP 200/`valid: false` with `INVALID_PROOF`, and replay accepted the first proof then rejected the duplicate with `NULLIFIER_USED`. The Judge Compose project, test volume, and networks were removed after the run; ports 3000 and 8787 had no listener afterward. This remains synthetic Judge evidence only.
+
+The first isolated Compose project, volume, networks, and local image tags were removed after validation. This verifies the Docker Judge surface only. The diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f` was then pushed to PR branch `feat/vercel-fullstack` and deployed through the existing public Compose project. The live and demo backends use image ID `sha256:f6bd059c7632c796c1f7d0c44f9bb6597241c9303769cb4859899c479d434c18`; the frontend uses image ID `sha256:82df14adc68f4019f897784b7b0320712889d0ce76d0a7b4a982300b38d177a2`. Both SQLite integrity checks returned `ok`; live remains at one claim/zero nullifiers and demo at one claim/one nullifier. This deployment contains safe diagnostics only; no behavioral timeout fix has been applied. The PR description and submission pack are being updated to this evidence; no merge or official submission occurred.
