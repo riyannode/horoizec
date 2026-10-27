@@ -59,8 +59,8 @@ No recording or video URL is included yet. Record the 110–118 second walkthrou
 
 - **Project name:** Horoi
 - **Track:** Core & Tooling
-- **Repository:** https://github.com/riyannode/horoizec (currently private; user visibility action remains)
-- **Working demo URL:** Pending a Horoi hostname and safe HTTPS route on the authorized VPS.
+- **Repository:** https://github.com/riyannode/horoizec (public; unauthenticated clone verified on 2026-10-27)
+- **Working demo URL:** No public HTTPS URL is available; VPS Docker profile remains loopback-only at 127.0.0.1:3001 per current user direction.
 - **Video URL:** Pending recording and separately authorized publication.
 - **Registered account:** @hpelong377
 - **Telegram contact:** @riyanhcr
