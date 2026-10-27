@@ -53,7 +53,7 @@ Target runtime: 110–118 seconds. Record the Docker Judge Demo from a clean loc
 | 96–108 s | Privacy boundary panel | “AssetId, threshold, snapshot statement, result, and claim-specific nullifier are public. Spending key, exact value, witness, note details, and wallet identity stay private.” |
 | 108–118 s | Brief architecture or repository view | “Browser-local Rust/WASM proving is separate from this server-side fixture walkthrough. Horoi supports one normal note, remains experimental and unaudited, and does not support mainnet or aggregate balances.” |
 
-No recording or video URL is included yet. Record the 110–118 second walkthrough from a clean local Docker run and keep the fixture provenance visible. The public HTTPS URL remains a separate submission requirement; upload or publish the video only with separate approval.
+An unpublished 114-second narrated video is prepared from captured `/demo` UI screenshots and recorded fixture responses. It is a faithful evidence walkthrough, not a continuous live-screen capture or a new verification run. The local synthetic fixture label remains visible. No video URL is available; upload or publish the video only with separate approval. The public HTTPS URL remains a separate submission requirement.
 
 ## Prepared submission fields
 
