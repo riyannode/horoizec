@@ -40,20 +40,21 @@ docker compose -f docker-compose.public.yml up --build -d
 
 This starts `backend-live`, `backend-demo`, and `frontend-public` under the `horoi-public` project. The frontend binds to `127.0.0.1:3001`; point the existing HTTPS proxy at `frontend-public:3000` on `horoi-public_edge`. See [DEPLOYMENT.md](DEPLOYMENT.md) for the proxy procedure and the deployment evidence record.
 
-The Judge fixture and public-demo `/demo` route remain synthetic. Historical public QEDIT testnet proof acceptance is recorded separately in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md); it does not establish a new browser-generated proof or cold-scan acceptance for a later deployment.
+The Judge fixture and public-demo `/demo` route remain synthetic. Fresh and historical public QEDIT proof results are recorded separately in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md); neither synthetic surface is public-chain ownership evidence.
 
 ## Current release acceptance (2026-10-28)
 
-At the 2026-10-28 checkpoint, deployed source remains ce36f60ce5f6dc761bf7b78b849952d172a2a343; public health returned HTTP 200 with network zsa-testnet. Pushed PR source is 4a08917d8dc6129dcd095ff64ebb687f33be4fbf and is not deployed. Current production image IDs were not independently queried; older recorded IDs belong to 92710678a2efad1b27552e9345c41036a604ed3f. The live app routes to backend-live; /demo routes to the isolated synthetic backend. See DEPLOYMENT.md for the evidence record.
+Source `59ade00c5d075ded514972b97f6da19c60087820` is deployed from the open Draft PR branch. The public health endpoint returns HTTP 200 with `network: zsa-testnet`; `/demo` still routes to the isolated synthetic backend. All three public Horoi containers are healthy. Image IDs and preserved volume identities are recorded in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 | Gate | Current evidence | Status |
 | --- | --- | --- |
-| Public-chain snapshot integration | One new claim at QEDIT snapshot 8457 was persisted for the minted AssetId with canonical roots. This is not holder eligibility. | Verified |
-| Synthetic Judge flow | Public `/demo` valid, tampered, and two independent replay walkthroughs passed. | Verified |
-| Fresh browser proof from an eligible live note | Browser scan reached block 4016/8457 and was interrupted before proof generation or submission. | Unverified |
-| Full cold-scan latency | Earlier request closed at 30,002 ms; first async snapshot-8457 job failed after about 11m24s. A single retry created the canonical claim, but the browser action scan was interrupted at block 4016/8457. | Unresolved |
+| Public-chain snapshot integration | Claim c19b11... at QEDIT snapshot 8457 stores the minted AssetId, threshold 1, and canonical roots. | Verified |
+| Synthetic Judge flow | Valid, tampered, and replay scenarios passed on the clean-clone Judge at source 4a08917; hosted `/demo` was rechecked after 59ade00 deployment. | Verified; latest local Judge rebuild pending |
+| Fresh browser proof from an eligible live note | A 5,640-byte HCP1 proof was generated from the full 529-range action feed and accepted by the live verifier; stateless valid, replay 409, tamper false. | Verified in WSL Chromium |
+| Strict ChatGPT Browser criterion | The full proof used WSL Chromium to keep the key out of browser-control tool arguments; the ChatGPT in-app browser remained on the public claim page. | Partial; historical ChatGPT flow exists |
+| Full cold-scan reliability | One snapshot-8457 verification completed; earlier 30-second abort and `SNAPSHOT_UNAVAILABLE` remain. A single success does not establish reliable cold-path performance. | Unresolved |
 
-The local Judge passed `docker compose up --build` from a fresh public clone of default branch `feat/vercel-fullstack` at diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f`. Both containers became healthy, the proxied health endpoint returned HTTP 200 with `zebra-regtest`, and browser valid, tamper, and replay scenarios passed. On 2026-10-27, the current working tree was also built in isolated Compose project `horoi-resume-test`; both containers became healthy, `/api/v1/health` and `/demo` returned HTTP 200, and ChatGPT's in-app browser observed `valid: true`, `INVALID_PROOF`, and `NULLIFIER_USED` on the synthetic Judge. The hosted `/demo` returned the same outcomes in that browser. The isolated Compose resources were removed after the run. These synthetic checks do not close the fresh live-proof gate.
+The local Judge passed `docker compose up --build` from fresh public clones at source 92710678 and 4a08917. The 59ade00 change was tested with backend and frontend checks/builds and deployed to public Compose, but the local root Judge was not rebuilt at that source because WSL Docker Engine was unavailable. The synthetic checks remain distinct from the fresh QEDIT proof.
 
 
 On 2026-10-28 a fresh public clone at 4a08917 built healthy Docker Judge containers. Health and /demo returned HTTP 200; the ChatGPT in-app browser observed valid true, INVALID_PROOF, and NULLIFIER_USED. This remains synthetic Judge evidence and does not establish QEDIT note ownership.

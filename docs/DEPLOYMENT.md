@@ -102,10 +102,24 @@ External acceptance returned HTTP 200 for `/`, `/demo`, `/api/v1/health`, `/api/
 The hosted Docker demo and the historical public QEDIT testnet proof run are separate evidence. The hosted fixture proves that the deployed Rust/HCP1 verifier accepts the pinned synthetic fixture and rejects the tampered proof; it does not establish a live public-chain scan, Zebra regtest execution, or a newly generated browser wallet proof. No public-chain scan or blockchain transaction runs at startup.
 
 
-## Latest continuation (2026-10-28)
+## Earlier interrupted continuation (2026-10-28)
 
 A single live create retry at QEDIT height 8457 succeeded and persisted claim c19b11d72b79fab77b21942e031ae52ac177550a9a19de3a3ecee0fb1a40060e with threshold 1 and canonical roots. The public app remains on deployed source ce36f60; PR source 4a08917 is not deployed.
 
 In ChatGPT's in-app browser, the claim scan fetched public 16-block action ranges through block 4016/8457, with every observed request returning HTTP 200. The test tab was closed when the user interrupted the run. No proof, submission, replay, tamper, or fresh proof-submit privacy result exists. The browser tool now reports local browser use disabled, so this attempt was not resumed. Note eligibility for the circuit is unconfirmed.
 
 A fresh public clone of 4a08917 passed the Docker Judge build and browser valid/tamper/replay scenarios. Its zebra-regtest fixture remains synthetic and separate from the live QEDIT claim. The clone's project-specific containers, volume, network, and directory were removed. No production deployment, Caddy reload, or UNMET service change was made.
+
+## Current deployed release and fresh QEDIT E2E (2026-10-28)
+
+The verified `vps-development` SSH alias targets `root@43.156.68.254`. Source `59ade00c5d075ded514972b97f6da19c60087820` is deployed in the existing `horoi-public` Compose project. No volume reset occurred; `horoi-public_live_data` and `horoi-public_horoi_data` remain separate. All three Horoi containers are healthy:
+
+| Service | Image ID | State |
+| --- | --- | --- |
+| `frontend-public` | `sha256:cf0e2cb91c929a2cb6ea63c442ea8a9c5c03d753ed59de36ab76cf8a8f51120f` | healthy |
+| `backend-live` | `sha256:393e3a047322ab1b944db5c4a6baaae67bc0f306ead3e9121d8eb05abc78a0b3` | healthy |
+| `backend-demo` | `sha256:393e3a047322ab1b944db5c4a6baaae67bc0f306ead3e9121d8eb05abc78a0b3` | healthy |
+
+`/`, `/demo`, `/api/v1/health`, the live claim page, and `/api/v1/demo/fixture` returned HTTP 200; health reports `network: zsa-testnet`. Both live and demo SQLite databases passed `PRAGMA integrity_check`. Caddy container `fe88c27251c3520fc9f99c8d90a2ba0e66f6cd8bc79f46260445e74b5e55d88c` and UNMET API container `8694dcb44075d9cea3d35fa375880e8cb6045b883a26e542b635485eb477011b` retained their IDs and healthy status. UNMET `/health`, `/ready`, `/live`, and `/v1/demands` returned HTTP 200. No Caddy or UNMET recreation was performed.
+
+The same deployment completed a fresh browser-local HCP1 flow for the existing public QEDIT claim at snapshot 8457. The proof job returned HTTP 202 and terminal HTTP 200 with `accepted: true`; stateless verification returned HTTP 200/`valid: true`, identical replay returned HTTP 409/`NULLIFIER_USED`, and tampering returned HTTP 200/`valid: false`. The report records the 5,640-byte proof, public roots, WASM identities, timings, scan coverage, and request-field privacy inspection. WSL Docker Engine was unavailable, so the local root Docker Judge was not rerun against 59ade00; the last clean-clone Judge result remains at 4a08917.

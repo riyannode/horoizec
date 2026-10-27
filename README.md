@@ -8,11 +8,11 @@ The current experimental implementation proves that one normal OrchardZSA note m
 
 | Surface | URL or command | Evidence boundary |
 | --- | --- | --- |
-| Public application | [https://horoi.kima.my.id](https://horoi.kima.my.id) | Public testnet application backed by the live API service. A fresh browser-generated proof on the corrected release remains unverified. |
+| Public application | [https://horoi.kima.my.id](https://horoi.kima.my.id) | Public testnet application backed by the live API service. A fresh one-note proof for snapshot 8457 was accepted by the live verifier on 2026-10-28; the strict ChatGPT Browser criterion is recorded separately. |
 | Public synthetic fixture | [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo) | Native HCP1 verification, tamper rejection, and isolated SQLite replay using the labeled local synthetic fixture. |
 | Local Judge | `docker compose up --build`, then [http://localhost:3000/demo](http://localhost:3000/demo) | Zero-credential synthetic Judge environment; its backend cannot reach public RPC. |
 
-These are separate routes and backend services. The fixture walkthrough does not establish a live-chain proof. Historical public QEDIT testnet proof acceptance is documented below and in [docs/PUBLIC_ZSA_E2E_REPORT.md](docs/PUBLIC_ZSA_E2E_REPORT.md); it is not a new proof from the corrected release.
+These are separate routes and backend services. The fixture walkthrough does not establish a live-chain proof. The fresh snapshot-8457 proof and the historical snapshot-7596 proof are documented separately in [docs/PUBLIC_ZSA_E2E_REPORT.md](docs/PUBLIC_ZSA_E2E_REPORT.md).
 
 ## Docker Judge Quickstart
 
@@ -42,7 +42,7 @@ A browser E2E recorded on 2026-10-25 accepted a real one-note HCP1 proof against
 
 This evidence covers one eligible note, not separate Alice/Bob holders. The `u64::MAX` `NoEligibleNote` run used the same test-wallet note data as a negative threshold case; it is not a second-holder demonstration. The proof does not aggregate multiple notes or support split notes.
 
-Cold snapshot reliability remains unresolved. Historical snapshots completed in 509,443–919,090 ms, and the historical full browser action scan took about 1,410,512 ms. An earlier request closed after 30,002 ms with the owner still unknown; the first async job at height 8457 later failed with SNAPSHOT_UNAVAILABLE after about 11m24s. A single retry on the deployed source succeeded and created claim c19b11d72b79fab77b21942e031ae52ac177550a9a19de3a3ecee0fb1a40060e at canonical snapshot 8457. A browser scan then fetched public action ranges through block 4016/8457, all observed range responses HTTP 200, before the test tab was closed on interruption. No proof submission or fresh ownership proof resulted. The checkpoint/resume source at 4a08917 is not deployed. No cold-path performance guarantee is claimed. See [docs/PUBLIC_ZSA_E2E_REPORT.md](docs/PUBLIC_ZSA_E2E_REPORT.md) for exact evidence.
+An earlier async snapshot job failed after about 11m24s, followed by a successful retry that persisted claim c19b11d72b79fab77b21942e031ae52ac177550a9a19de3a3ecee0fb1a40060e at canonical height 8457. On 2026-10-28 the deployed 59ade00 source completed a fresh proof job for that claim: all 529 public 16-block action ranges were present, the live verifier accepted a 5,640-byte HCP1 proof, stateless verification returned `valid: true`, replay returned HTTP 409 `NULLIFIER_USED`, and tampering returned `valid: false`. The browser was WSL Chromium; it was not the ChatGPT in-app browser, so the strict §24.I criterion remains partial. This single completed run is not a cold-path reliability guarantee. See [docs/PUBLIC_ZSA_E2E_REPORT.md](docs/PUBLIC_ZSA_E2E_REPORT.md) for the full evidence and limitations.
 
 The protocol is experimental and unaudited; do not use real funds. Mainnet is disabled.
 

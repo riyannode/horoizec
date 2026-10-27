@@ -1975,6 +1975,25 @@ L. Honesty
       one-note limitation and no demonstrated public-testnet Alice/Bob pair
       synthetic Docker fixture is not public-testnet evidence
 
+Verification status snapshot (2026-10-28; evidence details are in
+PUBLIC_ZSA_E2E_REPORT.md). These statuses record evidence and do not change
+the acceptance requirements above.
+
+| Criterion | Status | Evidence boundary |
+| --- | --- | --- |
+| A. Repository | `PASS_CURRENTLY_VERIFIED` | Required `backend/`, `frontend/`, and `docs/` structure is present. |
+| B. ZSA | `PARTIAL` | Public QEDIT test genesis, NU7, and Zebra/protocol compatibility were checked; exact running upstream source revision remains unknown. |
+| C. Claim | `PASS_CURRENTLY_VERIFIED` | Live claim at snapshot 8457 binds the minted AssetId, threshold 1, and canonical roots. |
+| D. Privacy | `PASS_CURRENTLY_VERIFIED` | Fresh submit request contained only claim ID, protocol version, proof, and alternate nullifier; no private key, note, balance, or witness was observed. |
+| E. Proof | `PASS_CURRENTLY_VERIFIED` | A fresh 5,640-byte HCP1 proof for the confirmed QEDIT note was accepted by the deployed native verifier. |
+| F. Verification | `PASS_CURRENTLY_VERIFIED` | Stateless verification returned `valid: true`; a tampered proof returned `valid: false`; existing Rust tests cover wrong asset and snapshot. |
+| G. Replay | `PASS_CURRENTLY_VERIFIED` | Identical live proof/nullifier submission returned HTTP 409 `NULLIFIER_USED`. |
+| H. Domain separation | `PASS_CURRENTLY_VERIFIED` | Locked Rust tests cover claim-domain and alternate-nullifier separation. |
+| I. Browser | `PARTIAL` | The fresh full flow ran in WSL Chromium; the strict ChatGPT Browser criterion is supported by the historical 2026-10-25 run only. |
+| J. Build | `PARTIAL` | Current backend/frontend checks and builds passed and public Compose is healthy; root Docker Judge acceptance was last reproduced on source 4a08917, not 59ade00. |
+| K. Documentation | `PASS_CURRENTLY_VERIFIED` | This status snapshot and linked docs record the current, historical, and synthetic evidence separately. |
+| L. Honesty | `PASS_CURRENTLY_VERIFIED` | Testnet-only, unaudited, one-note, and synthetic-fixture limitations remain explicit. |
+
 ======================================================================
 25. NON-GOALS
 ======================================================================
