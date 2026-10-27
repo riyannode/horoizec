@@ -22,6 +22,28 @@ For public HTTPS, use the Docker public profile documented in [DEPLOYMENT.md](DE
 
 The `u64::MAX` insufficient-balance test returned `NoEligibleNote` for the same test-wallet note data. It is a negative threshold test, not a second holder named Bob. The Alice/Bob example in PRD §27 is illustrative only; no two-holder public-testnet demo has been demonstrated. The separate 2026-10-22 local-regtest run is fixture evidence, not public-testnet evidence.
 
+
+## PRD §24 acceptance A–L (2026-10-27)
+
+Statuses follow the evidence recorded for this release; historical public-testnet results are not attributed to the Docker fixture.
+
+| Item | Status | Evidence and limit |
+| --- | --- | --- |
+| A. Repository structure | `PASS_CURRENTLY_VERIFIED` | Tracked project directories are `backend/`, `frontend/`, and `docs/`; root Compose files are the authorized deployment configuration. |
+| B. Compatible pinned ZSA environment | `PASS_HISTORICAL_EVIDENCE_ONLY` | Historical public QEDIT ZSA testnet evidence is recorded separately. The current Docker fixture is synthetic and does not establish a live Zebra or QEDIT connection. |
+| C. Immutable AssetId, threshold, and snapshot claim | `PASS_HISTORICAL_EVIDENCE_ONLY` | The historical public-testnet flow exercised a snapshot-bound claim. The current judge stack intentionally performs no chain scan or new live claim creation. |
+| D. Client-side wallet privacy | `PASS_CURRENTLY_VERIFIED` | Current browser fixture requests contain no wallet material; release image/environment/log scans found no spending key, witness, or private-note data. Browser-local proof generation remains separate. |
+| E. Genuine ZK ownership proof | `PASS_HISTORICAL_EVIDENCE_ONLY` | A real browser-local proof from one public-testnet note is documented in `PUBLIC_ZSA_E2E_REPORT.md`. The Docker page verifies a public synthetic fixture; it does not generate a new wallet proof. |
+| F. Verification and tamper rejection | `PASS_CURRENTLY_VERIFIED` | The release Rust verifier accepted the valid HCP1 fixture and rejected tampered proof, changed AssetId, and changed snapshot inputs with `INVALID_PROOF`. |
+| G. Note-level replay protection | `PASS_CURRENTLY_VERIFIED` | The release replay walkthrough repeatedly accepted then rejected the same proof using the production SQLite migration and unique constraint in isolated per-run SQLite state. Persistent SQLite state was unchanged. |
+| H. Claim-domain separation | `PASS_CURRENTLY_VERIFIED` | Locked Rust tests cover claim-domain and alternate-nullifier domain separation; Rust checks and tests pass for the release source. |
+| I. Complete browser E2E | `PASS_HISTORICAL_EVIDENCE_ONLY` | The historical public-testnet browser flow is documented. The current release browser exercised `/demo`; no public HTTPS browser run is possible while the VPS route remains loopback-only. |
+| J. Rust/backend/frontend/Docker build | `PASS_CURRENTLY_VERIFIED` | Locked Rust, Bun backend, Next.js checks, clean public-clone Docker build, production startup, health checks, and judge scenarios pass on the release source. |
+| K. Documentation consistency | `PASS_CURRENTLY_VERIFIED` | Setup, API, architecture, security, Docker, hackathon, and historical E2E documents describe the current implementation and provenance separately. |
+| L. Testnet and product limitations disclosed | `PASS_CURRENTLY_VERIFIED` | Documentation labels the synthetic fixture, experimental/unaudited status, one-note scope, note-level replay, and lack of a demonstrated public-testnet Alice/Bob pair. |
+
+The public HTTPS demo requirement remains separate from this matrix: the deployed Docker stack is healthy on VPS loopback only, and there is no public Horoi URL or external-browser acceptance yet.
+
 ## Limitations
 
 The implementation is experimental and unaudited, runs against pinned testnet/regtest software, and has one recorded public-testnet acceptance result for one normal note. It has no demonstrated Alice/Bob pair, aggregate balance, or split-note proof. Mainnet is not supported. Replay protection is note-level within a claim domain, not person-level or wallet-level. Cold snapshot latency remains unreliable: a historical baseline was 509,443 ms; later completed local-only runs took 840,604–919,090 ms, and a separate latest request exceeded the 900,000 ms client boundary without a captured HTTP response. The cause was not isolated; see the report.
