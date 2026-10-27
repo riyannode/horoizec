@@ -11,6 +11,13 @@ export interface ClaimCreationJob {
   claim?: Claim;
   error?: { code: string; message: string };
 }
+export interface ProofSubmissionJob {
+  jobId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stage: string;
+  result?: { accepted: true; replayProtection: "note-level" };
+  error?: { code: string; message: string };
+}
 export interface PublicOrchardAction {
   nullifier: string;
   cmx: string;

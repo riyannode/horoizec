@@ -69,6 +69,71 @@ describe("malformed JSON request bodies", () => {
   });
 });
 
+describe("proof submission jobs", () => {
+  it("returns before native verification and exposes the completed job result", async () => {
+    const { config } = await import("./config");
+    config.HOROI_DEMO_MODE = false;
+    config.NETWORK_ID = "zebra-regtest";
+    config.HOROI_TRUST_PROXY_CLIENT_IP = false;
+    const claimId = "f".repeat(64);
+    const now = Math.floor(Date.now() / 1000);
+    db.query("INSERT INTO claims (id, protocol_version, network_id, name, description, asset_id, threshold, snapshot_height, commitment_root, exclusion_root, claim_domain, creator_nonce, expires_at, created_at) VALUES (?, 1, 'zebra-regtest', 'Job test', '', ?, '1', 1, ?, ?, ?, ?, NULL, ?)").run(
+      claimId, "11".repeat(66), "00".repeat(32), "00".repeat(32), "test-domain", "22".repeat(32), now,
+    );
+
+    const create = await server.fetch(new Request(`http://localhost/api/v1/claims/${claimId}/submit/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ claimId, protocolVersion: 1, proof: "AA==", alternateNullifiers: ["00".repeat(32)] }),
+    }));
+    expect(create.status).toBe(202);
+    const started = await create.json() as { jobId: string; status: string };
+    expect(started.status).toBe("running");
+    expect(started).not.toHaveProperty("proof");
+
+    let completed: { jobId: string; status: string; error?: { code: string } } | undefined;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const response = await server.fetch(new Request(`http://localhost/api/v1/claims/${claimId}/submit/jobs/${started.jobId}`));
+      completed = await response.json() as typeof completed;
+      if (completed?.status !== "running") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(completed).toMatchObject({ jobId: started.jobId, status: "failed", error: { code: "PROOF_INVALID" } });
+  });
+
+  it("cancels a running job without exposing its submitted proof", async () => {
+    const { config } = await import("./config");
+    config.HOROI_DEMO_MODE = false;
+    config.NETWORK_ID = "zebra-regtest";
+    const claimId = "d".repeat(64);
+    const now = Math.floor(Date.now() / 1000);
+    db.query("INSERT INTO claims (id, protocol_version, network_id, name, description, asset_id, threshold, snapshot_height, commitment_root, exclusion_root, claim_domain, creator_nonce, expires_at, created_at) VALUES (?, 1, 'zebra-regtest', 'Job cancel test', '', ?, '1', 1, ?, ?, ?, ?, NULL, ?)").run(
+      claimId, "11".repeat(66), "00".repeat(32), "00".repeat(32), "cancel-domain", "33".repeat(32), now,
+    );
+    const create = await server.fetch(new Request(`http://localhost/api/v1/claims/${claimId}/submit/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ claimId, protocolVersion: 1, proof: "AA==", alternateNullifiers: ["00".repeat(32)] }),
+    }));
+    const started = await create.json() as { jobId: string };
+    const cancel = await server.fetch(new Request(`http://localhost/api/v1/claims/${claimId}/submit/jobs/${started.jobId}/cancel`, { method: "POST" }));
+    expect(cancel.status).toBe(200);
+    expect(await cancel.json()).toMatchObject({ jobId: started.jobId, status: "cancelled" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  });
+
+  it("returns a stable not-found error for unknown status and cancellation", async () => {
+    const claimId = "e".repeat(64);
+    const status = await server.fetch(new Request(`http://localhost/api/v1/claims/${claimId}/submit/jobs/missing`));
+    expect(status.status).toBe(404);
+    expect(await status.json()).toMatchObject({ error: { code: "PROOF_JOB_NOT_FOUND" } });
+
+    const cancel = await server.fetch(new Request(`http://localhost/api/v1/claims/${claimId}/submit/jobs/missing/cancel`, { method: "POST" }));
+    expect(cancel.status).toBe(404);
+    expect(await cancel.json()).toMatchObject({ error: { code: "PROOF_JOB_NOT_FOUND" } });
+  });
+});
+
 describe("claim creation jobs", () => {
   it("returns a stable not-found error for an unknown job and cancellation", async () => {
     const status = await server.fetch(new Request("http://localhost/api/v1/claims/jobs/missing"));

@@ -30,7 +30,7 @@ Request JSON: `{ "fixtureId": "judge-hcp1" }`. Each request creates a temporary 
 
 Response 200: `{ "firstSubmission": { "accepted": true }, "replay": { "accepted": false, "errorCode": "NULLIFIER_USED" }, "replayProtection": "note-level", "state": "isolated-sqlite-per-run", "alternateNullifier": string }`. These are the results of the two real verifier/database operations inside one walkthrough request, not simulated HTTP 201/409 responses.
 
-Crypto routes have a process-wide budget of 48 operation units per minute, an 8-unit per-client budget when `HOROI_TRUST_PROXY_CLIENT_IP=true` and a valid `X-Horoi-Client-IP` is supplied by the configured proxy, a two-operation concurrency cap in demo mode, and at most 256 client buckets. Claim submission and demo submission cost two units. Rejections return HTTP 429 with `Retry-After`. `X-Forwarded-For` is never used as client identity. Live claim creation also has a 4-per-15-minute process limit and one-per-client limit when trusted identity is available; schema and native AssetId validation happen first. Live claim creation, proof verification, claim submission, and action-range requests have a 14-minute deadline that propagates client disconnects and timeout cancellation through native verification and RPC. A snapshot scan has a single-process admission gate and a 12-minute total deadline.
+Crypto routes have a process-wide budget of 48 operation units per minute, an 8-unit per-client budget when `HOROI_TRUST_PROXY_CLIENT_IP=true` and a valid `X-Horoi-Client-IP` is supplied by the configured proxy, a two-operation concurrency cap in demo mode, and at most 256 client buckets. Claim submission and demo submission cost two units. Rejections return HTTP 429 with `Retry-After`. `X-Forwarded-For` is never used as client identity. Live claim creation also has a 4-per-15-minute process limit and one-per-client limit when trusted identity is available; schema and native AssetId validation happen first. Live claim creation, proof verification, synchronous claim submission, and action-range requests have a 14-minute deadline that propagates client disconnects and timeout cancellation through native verification and RPC. A snapshot scan has a single-process admission gate and a 12-minute total deadline. The asynchronous proof-submission endpoint below uses its own bounded 14-minute worker deadline and is not tied to the initiating request connection.
 
 Demo mode also returns DEMO_READ_ONLY (403) for claim creation and public action-range fetching. These safeguards prevent cold public-chain scanning in Docker.
 
@@ -103,5 +103,27 @@ Request JSON: same as POST /proofs/verify; path ID must equal claimId.
 Response 200: { "accepted": true, "replayProtection": "note-level" }.
 
 Errors: BAD_REQUEST (400), CLAIM_NOT_FOUND (404), CLAIM_EXPIRED (410), PROOF_INVALID, PROOF_INPUT_MISMATCH (400), SNAPSHOT_STALE, NULLIFIER_USED (409), SNAPSHOT_UNAVAILABLE, ZCASH_RPC_UNAVAILABLE, VERIFIER_UNAVAILABLE (503).
+
+## POST /claims/:id/submit/jobs
+
+Request JSON: same as `POST /claims/:id/submit`.
+
+Response 202: `{ "jobId": string, "status": "running", "stage": string }`. The worker runs the same native HCP1 verifier, canonical snapshot/reorg validation, claim-expiry check, and atomic nullifier consumption as the synchronous endpoint. Only one proof-submission job may run per backend process. Its 14-minute deadline aborts verifier/RPC work; cancellation is available through the endpoint below. Jobs and status are held in process memory for at most 30 minutes and are lost on backend restart. The submitted proof exists only in the worker's memory while verification runs; it is not returned by status responses or written to logs or persistent storage.
+
+Errors: CLAIM_NOT_FOUND (404), CLAIM_EXPIRED (410), PROOF_INPUT_MISMATCH (400), RATE_LIMITED (429) when another proof job is active or the bounded job table is full.
+
+## GET /claims/:id/submit/jobs/:jobId
+
+Response 200 while running: `{ "jobId": string, "status": "running", "stage": string }`. Completion includes `{ "accepted": true, "replayProtection": "note-level" }`; failure includes a safe `{ "code", "message" }` error. The proof is never returned.
+
+Errors: PROOF_JOB_NOT_FOUND (404) if the job is unknown, its claim ID differs, expired, or lost during a backend restart.
+
+## POST /claims/:id/submit/jobs/:jobId/cancel
+
+Request: no body. Aborts active native verification or snapshot validation. A terminal job returns its current status without changing a completed nullifier result.
+
+Response 200: the current job status object.
+
+Errors: PROOF_JOB_NOT_FOUND (404).
 
 The verifier bridge uses one JSON request and response per line. HCP1 hex is used internally; HTTP accepts base64. Proof payloads are never persisted. See [ERRORS.md](ERRORS.md) for user messages and operator actions.

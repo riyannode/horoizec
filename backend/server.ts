@@ -16,6 +16,8 @@ const app = new Hono<{ Variables: Variables }>();
 const ROUTE_DEADLINE_MS = 14 * 60_000;
 const CLAIM_JOB_TTL_MS = 30 * 60_000;
 const MAX_CLAIM_JOBS = 64;
+const PROOF_JOB_TTL_MS = 30 * 60_000;
+const MAX_PROOF_JOBS = 64;
 type ClaimCreationJob = {
   id: string;
   requestId: string;
@@ -30,6 +32,20 @@ type ClaimCreationJob = {
 };
 const claimCreationJobs = new Map<string, ClaimCreationJob>();
 let activeClaimCreationJobId: string | undefined;
+type ProofSubmissionJob = {
+  id: string;
+  claimId: string;
+  requestId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stage: string;
+  startedAt: number;
+  controller: AbortController;
+  result: { accepted: true; replayProtection: "note-level" } | null;
+  error: { code: string; message: string } | null;
+  deadlineExceeded: boolean;
+};
+const proofSubmissionJobs = new Map<string, ProofSubmissionJob>();
+let activeProofSubmissionJobId: string | undefined;
 function setStage(c: Context<{ Variables: Variables }>, stage: string) {
   c.set("stage", stage);
   c.set("stageStartedAt", performance.now());
@@ -54,6 +70,7 @@ const messages: Record<string, string> = {
   BAD_REQUEST: "The request is invalid.",
   CLAIM_NOT_FOUND: "The claim was not found.",
   CLAIM_JOB_NOT_FOUND: "The claim creation job was not found.",
+  PROOF_JOB_NOT_FOUND: "The proof submission job was not found.",
   CLAIM_EXPIRED: "The claim has expired.",
   PROOF_INVALID: "The proof could not be verified.",
   PROOF_INPUT_MISMATCH: "The proof does not match this claim.",
@@ -88,7 +105,7 @@ app.use("*", async (c, next) => {
 });
 app.onError((error, c) => {
   const code = Object.hasOwn(messages, error.message) ? error.message : "INTERNAL_ERROR";
-  const status = code === "RATE_LIMITED" ? 429 : code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" || code === "CLAIM_JOB_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
+  const status = code === "RATE_LIMITED" ? 429 : code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" || code === "CLAIM_JOB_NOT_FOUND" || code === "PROOF_JOB_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
   console.error(JSON.stringify({
     event: "request_failed",
     requestId: c.get("requestId"),
@@ -122,7 +139,7 @@ async function limitCrypto(c: Context<{ Variables: Variables }>, next: Next) {
     cryptoWindowStartedAt = now;
     cryptoRequests = 0;
   }
-  const cost = c.req.path.endsWith("/submit") ? 2 : 1;
+  const cost = c.req.path.endsWith("/submit") || c.req.path.endsWith("/submit/jobs") ? 2 : 1;
   const proxyAddress = config.HOROI_TRUST_PROXY_CLIENT_IP ? c.req.header("x-horoi-client-ip") : undefined;
   const clientAddress = proxyAddress && isIP(proxyAddress) ? proxyAddress : undefined;
   for (const [address, bucket] of clientBuckets) {
@@ -279,7 +296,9 @@ async function acceptProof(
   consume = consumeNullifier,
   signal?: AbortSignal,
   requestId?: string,
+  onStage?: (stage: string) => void,
 ) {
+  onStage?.("native_verification");
   const result = await verifyProof({
     networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
     snapshotHeight: claim.snapshotHeight, commitmentRoot: claim.commitmentRoot,
@@ -290,8 +309,10 @@ async function acceptProof(
   if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
     throw new Error("PROOF_INPUT_MISMATCH");
   }
+  onStage?.("snapshot_validation");
   await assertActiveSnapshot(claim, signal, requestId);
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
+  onStage?.("nullifier_consumption");
   if (!consume(claim.id, result.alternateNullifier)) throw new Error("NULLIFIER_USED");
   return result.alternateNullifier;
 }
@@ -324,6 +345,70 @@ function publicClaimCreationJob(job: ClaimCreationJob) {
     claim: job.claim ?? undefined,
     error: job.error ?? undefined,
   };
+}
+function pruneProofSubmissionJobs(now = Date.now()) {
+  for (const [id, job] of proofSubmissionJobs) {
+    if (job.status !== "running" && now - job.startedAt >= PROOF_JOB_TTL_MS) proofSubmissionJobs.delete(id);
+  }
+}
+function makeRoomForProofSubmissionJob() {
+  while (proofSubmissionJobs.size >= MAX_PROOF_JOBS) {
+    const oldestFinished = [...proofSubmissionJobs.values()].find((job) => job.status !== "running");
+    if (!oldestFinished) break;
+    proofSubmissionJobs.delete(oldestFinished.id);
+  }
+  return proofSubmissionJobs.size < MAX_PROOF_JOBS;
+}
+function publicProofSubmissionJob(job: ProofSubmissionJob) {
+  return {
+    jobId: job.id,
+    status: job.status,
+    stage: job.stage,
+    result: job.result ?? undefined,
+    error: job.error ?? undefined,
+  };
+}
+function startProofSubmissionJob(
+  claim: NonNullable<ReturnType<typeof getClaim>>,
+  input: ReturnType<typeof verifySchema.parse>,
+  requestId: string,
+): ProofSubmissionJob {
+  const id = randomUUID();
+  const job: ProofSubmissionJob = {
+    id, claimId: claim.id, requestId, status: "running", stage: "queued", startedAt: Date.now(),
+    controller: new AbortController(), result: null, error: null, deadlineExceeded: false,
+  };
+  proofSubmissionJobs.set(id, job);
+  activeProofSubmissionJobId = id;
+  const deadline = setTimeout(() => {
+    job.deadlineExceeded = true;
+    job.controller.abort();
+  }, ROUTE_DEADLINE_MS);
+  void (async () => {
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await acceptProof(claim, input, consumeNullifier, job.controller.signal, requestId, (stage) => { job.stage = stage; });
+      if (job.status !== "cancelled") {
+        job.status = "completed";
+        job.stage = "completed";
+        job.result = { accepted: true, replayProtection: "note-level" };
+        console.info(JSON.stringify({ event: "proof_submission_job_completed", requestId, jobId: id, claimId: claim.id, stage: job.stage, snapshotHeight: claim.snapshotHeight, durationMs: Date.now() - job.startedAt }));
+      }
+    } catch (error) {
+      if (job.status !== "cancelled") {
+        const candidate = error instanceof Error ? error.message : "";
+        const code = Object.hasOwn(messages, candidate) ? candidate : "INTERNAL_ERROR";
+        job.status = "failed";
+        job.error = { code, message: messages[code] ?? "An internal error occurred." };
+        console.error(JSON.stringify({ event: "proof_submission_job_failed", requestId, jobId: id, claimId: claim.id, stage: job.stage, snapshotHeight: claim.snapshotHeight, errorCode: code, failureCategory: job.deadlineExceeded ? "job_deadline" : job.controller.signal.aborted ? "job_cancelled" : "application_error", durationMs: Date.now() - job.startedAt }));
+      }
+    } finally {
+      clearTimeout(deadline);
+      if (activeProofSubmissionJobId === id) activeProofSubmissionJobId = undefined;
+    }
+  })();
+  console.info(JSON.stringify({ event: "proof_submission_job_started", requestId, jobId: id, claimId: claim.id, snapshotHeight: claim.snapshotHeight }));
+  return job;
 }
 async function createClaimWithSnapshot(input: CreateClaimInput, signal: AbortSignal, requestId: string, onStage: (stage: string) => void) {
   onStage("snapshot_resolution");
@@ -496,6 +581,38 @@ app.post("/api/v1/proofs/verify", async (c) => {
     });
   });
 });
+app.post("/api/v1/claims/:id/submit/jobs", limitCrypto, async (c) => {
+  if (config.HOROI_DEMO_MODE) throw new Error("DEMO_READ_ONLY");
+  const claimId = c.req.param("id");
+  if (!claimId) throw new Error("CLAIM_NOT_FOUND");
+  const claim = getClaim(claimId);
+  if (!claim) throw new Error("CLAIM_NOT_FOUND");
+  if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
+  const parsed = verifySchema.safeParse(await parseJsonBody(c));
+  if (!parsed.success) throw new Error("BAD_REQUEST");
+  if (parsed.data.claimId !== claim.id || parsed.data.protocolVersion !== claim.protocolVersion) throw new Error("PROOF_INPUT_MISMATCH");
+  if (activeProofSubmissionJobId) return c.json({ error: { code: "RATE_LIMITED", message: messages.RATE_LIMITED, requestId: c.get("requestId") } }, 429, { "Retry-After": "2" });
+  pruneProofSubmissionJobs();
+  if (!makeRoomForProofSubmissionJob()) return c.json({ error: { code: "RATE_LIMITED", message: messages.RATE_LIMITED, requestId: c.get("requestId") } }, 429, { "Retry-After": "2" });
+  const job = startProofSubmissionJob(claim, parsed.data, c.get("requestId"));
+  return c.json(publicProofSubmissionJob(job), 202);
+});
+app.get("/api/v1/claims/:id/submit/jobs/:jobId", (c) => {
+  pruneProofSubmissionJobs();
+  const job = proofSubmissionJobs.get(c.req.param("jobId"));
+  if (!job || job.claimId !== c.req.param("id")) throw new Error("PROOF_JOB_NOT_FOUND");
+  return c.json(publicProofSubmissionJob(job));
+});
+app.post("/api/v1/claims/:id/submit/jobs/:jobId/cancel", (c) => {
+  const job = proofSubmissionJobs.get(c.req.param("jobId"));
+  if (!job || job.claimId !== c.req.param("id")) throw new Error("PROOF_JOB_NOT_FOUND");
+  if (job.status === "running") {
+    job.status = "cancelled";
+    job.controller.abort();
+    console.info(JSON.stringify({ event: "proof_submission_job_cancelled", requestId: job.requestId, jobId: job.id, claimId: job.claimId, stage: job.stage, durationMs: Date.now() - job.startedAt }));
+  }
+  return c.json(publicProofSubmissionJob(job));
+});
 app.post("/api/v1/claims/:id/submit", async (c) => {
   const claim = getClaim(c.req.param("id"));
   if (!claim || (config.HOROI_DEMO_MODE && !isDemoClaim(claim.id))) throw new Error("CLAIM_NOT_FOUND");
@@ -504,7 +621,7 @@ app.post("/api/v1/claims/:id/submit", async (c) => {
   if (!parsed.success) throw new Error("BAD_REQUEST");
   if (parsed.data.claimId !== claim.id || parsed.data.protocolVersion !== claim.protocolVersion) throw new Error("PROOF_INPUT_MISMATCH");
   return await withRouteDeadline(c, async (signal) => {
-    await acceptProof(claim, parsed.data, consumeNullifier, signal, c.get("requestId"));
+    await acceptProof(claim, parsed.data, consumeNullifier, signal, c.get("requestId"), (stage) => setStage(c, stage));
     return c.json({ accepted: true, replayProtection: "note-level" });
   });
 });
