@@ -65,22 +65,24 @@ The local Docker Judge Demo verifies a deterministic, explicitly labeled synthet
 
 **Character count:** 1,077 including spaces and paragraph breaks; below the 2,000-character limit.
 
-## Two-minute demo video script
+## Two-minute demo video storyboard
 
-Target runtime: 110–118 seconds. Record the Docker Judge Demo from a clean local volume; keep the `LOCAL SYNTHETIC TEST FIXTURE` label visible. Do not describe it as a public-chain proof or as new browser proof generation.
+The final browser recording is 111.92 seconds in WebM format. It uses the public application and hosted demo; the synthetic fixture label stays visible. The live QEDIT proof result is labeled as a recorded 2026-10-28 result, not a second proof run. The local Docker Judge segment states its latest clean-clone run was source `4a08917` and that a rebuild at `59ade00` was unavailable.
 
-| Time | Screen | Narration |
+| Time | Screen | On-screen caption |
 | --- | --- | --- |
-| 0–15 s | `/demo` title and privacy copy | “Zcash Shielded Assets protect holder and value, but applications still need eligibility checks. Asking users to publish an address or balance undermines that privacy.” |
-| 15–30 s | Horoi introduction | “Horoi is a prototype for proving that a private asset note meets a threshold at a fixed snapshot, while keeping the note and exact value private.” |
-| 30–48 s | Public claim statement and fixture provenance | “This claim binds the network, ZIP 227 AssetId, threshold, snapshot height, and commitment and exclusion roots. The Docker fixture carries a `zebra-regtest` tag, but its synthetic roots were not produced by a running Zebra node or QEDIT testnet.” |
-| 48–66 s | Click **Verify valid fixture** | “The backend sends the pinned HCP1 bundle through Horoi’s native Rust verifier. The result is valid because the cryptographic verifier accepts it.” |
-| 66–80 s | Click **Verify tampered fixture** | “Now the backend flips one proof byte and runs the same verifier. It returns `INVALID_PROOF`; the page does not hardcode a rejection.” |
-| 80–96 s | Click **Run replay scenario** | “The first proof submission is accepted. SQLite records its claim-specific alternate nullifier; submitting the same note proof again returns `NULLIFIER_USED`.” |
-| 96–108 s | Privacy boundary panel | “AssetId, threshold, snapshot statement, result, and claim-specific nullifier are public. Spending key, exact value, witness, note details, and wallet identity stay private.” |
-| 108–118 s | Brief architecture or repository view | “Browser-local Rust/WASM proving is separate from this server-side fixture walkthrough. Horoi supports one normal note, remains experimental and unaudited, and does not support mainnet or aggregate balances.” |
+| 0–12 s | Full application | Private ZSA ownership claims · live QEDIT testnet · experimental and unaudited. |
+| 12–23 s | Public claims list | Public claim statements bind the ZIP 227 AssetId, threshold, and snapshot. |
+| 23–35 s | Snapshot-8457 claim | One-note threshold claim with canonical public roots. |
+| 35–53 s | Recorded live E2E result | Fresh 5,640-byte HCP1 proof accepted; stateless valid; replay 409; tamper invalid. No private fields sent. |
+| 53–61 s | Hosted `/demo` | Explicitly labeled synthetic fixture, isolated from the live QEDIT backend. |
+| 61–70 s | Verify valid fixture | Native Rust verifier returns `valid: true`. |
+| 70–78 s | Verify tampered fixture | Native Rust verifier rejects the mutation with `INVALID_PROOF`. |
+| 78–87 s | Replay walkthrough | First synthetic submission accepted; duplicate returns `NULLIFIER_USED`. |
+| 87–99 s | Three evaluation surfaces | Full app, hosted synthetic demo, and Docker Judge command with the latest verified-revision caveat. |
+| 99–112 s | Privacy and limitations | Keys and witness stay browser-local; testnet-only, one normal note, unaudited, no person-level uniqueness; cold-scan reliability unresolved. |
 
-The script above is prepared, but no final video file is present in the repository or task outputs. After source, deployment, PRD, and submission fields are finalized, record the actual application walkthrough and export it. Keep the local synthetic fixture label visible and identify the QEDIT proof as historical. No video URL is available yet.
+The recording is available locally in the task outputs as `Horoi-ZECATHON-2026-Demo-final.webm`. It is not stored in the repository or published, so no public video URL is available. The submission form remains unsubmitted.
 
 ## Prepared submission fields
 
@@ -90,7 +92,7 @@ The script above is prepared, but no final video file is present in the reposito
 - **Live application:** https://horoi.kima.my.id
 - **Working demo URL:** https://horoi.kima.my.id/demo (public HTTPS, unauthenticated Docker deployment; synthetic local fixture).
 - **Docker Judge command:** `docker compose up --build` (clean-clone Judge runs passed at sources `9271067` and `4a08917`; the latest `59ade00` root Judge was not rebuilt because WSL Docker Engine was unavailable).
-- **Video URL:** Pending recording and separately authorized publication.
+- **Video:** Local 111.92-second WebM prepared; publication link pending.
 - **Registered account:** @hpelong377
 - **Telegram contact:** @riyanhcr
 - **Draft PR:** https://github.com/riyannode/horoizec/pull/1
