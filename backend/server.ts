@@ -11,14 +11,18 @@ import { getPublicActionBlocks, resolveSnapshot } from "./zcash";
 import { getDemoClaim, getDemoFixtureNullifier, getDemoOverview, getDemoProofBundle, initializeDemoFixture, isDemoClaim, pinnedDemoStatementMatches, verifyDemoProof } from "./demo";
 import { z } from "zod";
 
-type Variables = { requestId: string };
+type Variables = { requestId: string; stage?: string; stageStartedAt?: number; snapshotHeight?: number; abortReason?: string };
 const app = new Hono<{ Variables: Variables }>();
 const ROUTE_DEADLINE_MS = 14 * 60_000;
+function setStage(c: Context<{ Variables: Variables }>, stage: string) {
+  c.set("stage", stage);
+  c.set("stageStartedAt", performance.now());
+}
 async function withRouteDeadline<T>(c: Context<{ Variables: Variables }>, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
   const requestSignal = c.req.raw.signal;
-  const abortRequest = () => controller.abort();
-  const deadline = setTimeout(abortRequest, ROUTE_DEADLINE_MS);
+  const abortRequest = () => { c.set("abortReason", "request_closed"); controller.abort(); };
+  const deadline = setTimeout(() => { c.set("abortReason", "route_deadline"); controller.abort(); }, ROUTE_DEADLINE_MS);
   requestSignal.addEventListener("abort", abortRequest, { once: true });
   if (requestSignal.aborted) controller.abort();
   try {
@@ -61,12 +65,24 @@ app.use("*", async (c, next) => {
   const requestId = randomUUID();
   c.set("requestId", requestId);
   const start = performance.now();
+  c.set("stageStartedAt", start);
   await next();
-  console.info(JSON.stringify({ requestId, route: c.req.path, status: c.res.status, durationMs: Math.round(performance.now() - start) }));
+  console.info(JSON.stringify({ requestId, route: c.req.path, status: c.res.status, durationMs: Math.round(performance.now() - start), stage: c.get("stage"), snapshotHeight: c.get("snapshotHeight") }));
 });
 app.onError((error, c) => {
   const code = Object.hasOwn(messages, error.message) ? error.message : "INTERNAL_ERROR";
   const status = code === "RATE_LIMITED" ? 429 : code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
+  console.error(JSON.stringify({
+    event: "request_failed",
+    requestId: c.get("requestId"),
+    route: c.req.path,
+    stage: c.get("stage"),
+    stageDurationMs: Math.round(performance.now() - (c.get("stageStartedAt") ?? performance.now())),
+    snapshotHeight: c.get("snapshotHeight"),
+    errorCode: code,
+    failureCategory: c.get("abortReason") ?? (c.req.raw.signal.aborted ? "request_closed" : "application_error"),
+    aborted: c.req.raw.signal.aborted,
+  }));
   const response = c.json({ error: { code, message: messages[code] ?? messages.BAD_REQUEST, requestId: c.get("requestId") } }, status);
   if (code === "RATE_LIMITED") response.headers.set("Retry-After", "2");
   return response;
@@ -229,13 +245,13 @@ function admitSnapshotCreation(c: Context<{ Variables: Variables }>): Response |
 
 app.use("/api/v1/snapshots/*", limitActionRanges);
 
-async function assertActiveSnapshot(claim: NonNullable<ReturnType<typeof getClaim>>, signal?: AbortSignal) {
+async function assertActiveSnapshot(claim: NonNullable<ReturnType<typeof getClaim>>, signal?: AbortSignal, requestId?: string) {
   if (config.HOROI_DEMO_MODE) {
     if (!pinnedDemoStatementMatches(claim)) throw new Error("SNAPSHOT_STALE");
     return;
   }
   if (claim.networkId !== config.NETWORK_ID) throw new Error("SNAPSHOT_STALE");
-  const snapshot = await resolveSnapshot(claim.snapshotHeight, signal);
+  const snapshot = await resolveSnapshot(claim.snapshotHeight, signal, requestId);
   if (snapshot.commitmentRoot.toLowerCase() !== claim.commitmentRoot.toLowerCase() || snapshot.exclusionRoot.toLowerCase() !== claim.exclusionRoot.toLowerCase()) {
     throw new Error("SNAPSHOT_STALE");
   }
@@ -245,6 +261,7 @@ async function acceptProof(
   input: ReturnType<typeof verifySchema.parse>,
   consume = consumeNullifier,
   signal?: AbortSignal,
+  requestId?: string,
 ) {
   const result = await verifyProof({
     networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
@@ -256,7 +273,7 @@ async function acceptProof(
   if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
     throw new Error("PROOF_INPUT_MISMATCH");
   }
-  await assertActiveSnapshot(claim, signal);
+  await assertActiveSnapshot(claim, signal, requestId);
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
   if (!consume(claim.id, result.alternateNullifier)) throw new Error("NULLIFIER_USED");
   return result.alternateNullifier;
@@ -283,7 +300,8 @@ app.get("/api/v1/snapshots/:height/actions", async (c) => {
   const start = Number(c.req.query("start"));
   const end = Number(c.req.query("end"));
   if (![snapshotHeight, start, end].every(Number.isSafeInteger)) throw new Error("INVALID_SNAPSHOT");
-  return await withRouteDeadline(c, async (signal) => c.json({ blocks: await getPublicActionBlocks(snapshotHeight, start, end, signal) }));
+  c.set("snapshotHeight", snapshotHeight);
+  return await withRouteDeadline(c, async (signal) => c.json({ blocks: await getPublicActionBlocks(snapshotHeight, start, end, signal, c.get("requestId")) }));
 });
 app.get("/api/v1/claims/:id", (c) => {
   const claim = getClaim(c.req.param("id"));
@@ -292,17 +310,22 @@ app.get("/api/v1/claims/:id", (c) => {
 });
 app.post("/api/v1/claims", async (c) => {
   if (config.HOROI_DEMO_MODE) throw new Error("DEMO_READ_ONLY");
+  setStage(c, "request_validation");
   const parsed = createClaimSchema.safeParse(await parseJsonBody(c));
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path[0];
     throw new Error(field === "assetId" ? "INVALID_ASSET_ID" : field === "threshold" ? "INVALID_THRESHOLD" : field === "snapshotHeight" ? "INVALID_SNAPSHOT" : "BAD_REQUEST");
   }
   const input = parsed.data;
+  c.set("snapshotHeight", input.snapshotHeight);
   return await withRouteDeadline(c, async (signal) => {
+    setStage(c, "asset_id_validation");
     await validateAssetId(input.assetId, signal);
+    setStage(c, "snapshot_admission");
     const admission = admitSnapshotCreation(c);
     if (admission) return admission;
-    const snapshot = await resolveSnapshot(input.snapshotHeight, signal);
+    setStage(c, "snapshot_resolution");
+    const snapshot = await resolveSnapshot(input.snapshotHeight, signal, c.get("requestId"));
     const nonce = crypto.getRandomValues(new Uint8Array(32));
     const statement = {
       networkId: config.NETWORK_ID,
@@ -314,7 +337,9 @@ app.post("/api/v1/claims", async (c) => {
       expiresAt: input.expiresAt,
       creatorNonce: Array.from(nonce, (v) => v.toString(16).padStart(2, "0")).join("")
     };
+    setStage(c, "claim_derivation");
     const derived = await deriveClaim(statement, signal);
+    setStage(c, "sqlite_insert");
     const claim = saveClaim(input, {
       id: derived.claimId!, networkId: config.NETWORK_ID, commitmentRoot: statement.commitmentRoot,
       exclusionRoot: statement.exclusionRoot, claimDomain: derived.claimDomain!, creatorNonce: statement.creatorNonce
@@ -340,7 +365,7 @@ app.post("/api/v1/proofs/verify", async (c) => {
     if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
       throw new Error("PROOF_INPUT_MISMATCH");
     }
-    await assertActiveSnapshot(claim, signal);
+    await assertActiveSnapshot(claim, signal, c.get("requestId"));
     if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
     return c.json({
       valid: true,
@@ -363,7 +388,7 @@ app.post("/api/v1/claims/:id/submit", async (c) => {
   if (!parsed.success) throw new Error("BAD_REQUEST");
   if (parsed.data.claimId !== claim.id || parsed.data.protocolVersion !== claim.protocolVersion) throw new Error("PROOF_INPUT_MISMATCH");
   return await withRouteDeadline(c, async (signal) => {
-    await acceptProof(claim, parsed.data, consumeNullifier, signal);
+    await acceptProof(claim, parsed.data, consumeNullifier, signal, c.get("requestId"));
     return c.json({ accepted: true, replayProtection: "note-level" });
   });
 });

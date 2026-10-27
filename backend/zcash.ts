@@ -8,7 +8,25 @@ let rpcWindowStartedAt = Date.now();
 let rpcRequests = 0;
 let activeRpcRequests = 0;
 
-async function rpc(method: string, params: unknown[] = [], parentSignal?: AbortSignal): Promise<unknown> {
+type RpcTrace = { requestId?: string; stage: string; snapshotHeight?: number; blockHeight?: number };
+
+function logRpcFailure(trace: RpcTrace | undefined, method: string, attempt: number, durationMs: number, failureCategory: string, upstreamStatus?: number, aborted = false) {
+  console.warn(JSON.stringify({
+    event: "zcash_rpc_attempt_failed",
+    requestId: trace?.requestId,
+    stage: trace?.stage,
+    method,
+    attempt,
+    durationMs,
+    upstreamStatus,
+    failureCategory,
+    snapshotHeight: trace?.snapshotHeight,
+    blockHeight: trace?.blockHeight,
+    aborted,
+  }));
+}
+
+async function rpc(method: string, params: unknown[] = [], parentSignal?: AbortSignal, trace?: RpcTrace): Promise<unknown> {
   const now = Date.now();
   if (now - rpcWindowStartedAt >= RPC_WINDOW_MS) {
     rpcWindowStartedAt = now;
@@ -19,36 +37,56 @@ async function rpc(method: string, params: unknown[] = [], parentSignal?: AbortS
     headers.set("authorization", `Basic ${btoa(`${config.ZCASH_RPC_USER}:${config.ZCASH_RPC_PASSWORD}`)}`);
   }
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (parentSignal?.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+    if (parentSignal?.aborted) {
+      logRpcFailure(trace, method, attempt + 1, 0, "parent_abort", undefined, true);
+      throw new Error("SNAPSHOT_UNAVAILABLE");
+    }
     if (rpcRequests >= RPC_REQUEST_LIMIT || activeRpcRequests >= MAX_CONCURRENT_RPC_REQUESTS) {
+      logRpcFailure(trace, method, attempt + 1, 0, "capacity_limit");
       throw new Error("ZCASH_RPC_UNAVAILABLE");
     }
     rpcRequests++;
     activeRpcRequests++;
+    const startedAt = performance.now();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     const abortParent = () => controller.abort();
     parentSignal?.addEventListener("abort", abortParent, { once: true });
     if (parentSignal?.aborted) controller.abort();
+    let failureCategory = "invalid_response";
+    let upstreamStatus: number | undefined;
+    let terminalFailure = false;
     try {
       const response = await fetch(config.ZCASH_RPC_URL, {
         method: "POST", headers,
         body: JSON.stringify({ jsonrpc: "1.0", id: ++rpcId, method, params }),
         signal: controller.signal,
-      }).catch(() => null);
-      if (response?.ok) {
+      });
+      upstreamStatus = response.status;
+      if (!response.ok) {
+        failureCategory = "http_error";
+      } else {
         const body = await response.json().catch(() => null) as { result?: unknown; error?: unknown } | null;
-        if (body?.error || body?.result !== undefined) {
-          if (body.error || body.result === undefined) throw new Error("ZCASH_RPC_UNAVAILABLE");
+        if (body?.error) {
+          failureCategory = "rpc_error";
+          terminalFailure = true;
+        } else if (body?.result !== undefined) {
           return body.result;
+        } else {
+          failureCategory = controller.signal.aborted ? parentSignal?.aborted ? "parent_abort" : "timeout" : "invalid_response";
         }
       }
+    } catch {
+      failureCategory = parentSignal?.aborted ? "parent_abort" : controller.signal.aborted ? "timeout" : "network_error";
     } finally {
       clearTimeout(timeout);
       parentSignal?.removeEventListener("abort", abortParent);
       activeRpcRequests--;
     }
+    if (parentSignal?.aborted) failureCategory = "parent_abort";
+    logRpcFailure(trace, method, attempt + 1, Math.round(performance.now() - startedAt), failureCategory, upstreamStatus, parentSignal?.aborted ?? false);
     if (parentSignal?.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+    if (terminalFailure) throw new Error("ZCASH_RPC_UNAVAILABLE");
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
   }
   throw new Error("ZCASH_RPC_UNAVAILABLE");
@@ -115,9 +153,10 @@ const ZSA_NOTE_CIPHERTEXT_BYTES = 612;
 const QEDIT_REGTEST_GENESIS_HASH = "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327";
 const QEDIT_ZSA_TESTNET_GENESIS_HASH = "f41f61ddf9610ae40f519ad2e9e543e065ef0357eeecf5a4cc08a765d9505756";
 
-async function requireConfiguredNetwork(chain: ChainInfo, signal?: AbortSignal): Promise<void> {
+async function requireConfiguredNetwork(chain: ChainInfo, signal?: AbortSignal, trace?: RpcTrace): Promise<void> {
   if (chain.chain === "main" || chain.chain === "mainnet") throw new Error("MAINNET_DISABLED");
-  const genesisHash = await rpc("getblockhash", [0], signal);
+  if (trace) trace.stage = "snapshot_genesis";
+  const genesisHash = await rpc("getblockhash", [0], signal, trace);
   const isTestChain = chain.chain === "test" || chain.chain === "testnet";
   const matchesNetwork = config.NETWORK_ID === "zebra-regtest"
     ? isTestChain && genesisHash === QEDIT_REGTEST_GENESIS_HASH
@@ -129,29 +168,31 @@ async function requireConfiguredNetwork(chain: ChainInfo, signal?: AbortSignal):
   if (!zsaUpgradeActive) throw new Error("ZSA_UNSUPPORTED");
 }
 
-export async function getPublicActionBlocks(snapshotHeight: number, start: number, end: number, signal?: AbortSignal): Promise<PublicActionBlock[]> {
+export async function getPublicActionBlocks(snapshotHeight: number, start: number, end: number, signal?: AbortSignal, requestId?: string): Promise<PublicActionBlock[]> {
   if (!Number.isSafeInteger(snapshotHeight) || snapshotHeight < 1
     || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)
     || start < 1 || end < start || end > snapshotHeight || end - start >= 16) {
     throw new Error("INVALID_SNAPSHOT");
   }
-  const chain = await rpc("getblockchaininfo", [], signal) as ChainInfo;
-  await requireConfiguredNetwork(chain, signal);
+  const trace: RpcTrace = { requestId, stage: "public_action_range", snapshotHeight };
+  const chain = await rpc("getblockchaininfo", [], signal, trace) as ChainInfo;
+  await requireConfiguredNetwork(chain, signal, trace);
+  trace.stage = "public_action_range";
   if (!Number.isInteger(chain.blocks) || snapshotHeight > chain.blocks!) throw new Error("INVALID_SNAPSHOT");
   const [snapshotHash, canonicalEndHash] = await Promise.all([
-    rpc("getblockhash", [snapshotHeight], signal),
-    rpc("getblockhash", [end], signal),
+    rpc("getblockhash", [snapshotHeight], signal, trace),
+    rpc("getblockhash", [end], signal, { ...trace, blockHeight: end }),
   ]);
   if (typeof snapshotHash !== "string" || !/^[0-9a-f]{64}$/i.test(snapshotHash)
     || typeof canonicalEndHash !== "string" || !/^[0-9a-f]{64}$/i.test(canonicalEndHash)) {
     throw new Error("SNAPSHOT_UNAVAILABLE");
   }
   const heights = Array.from({ length: end - start + 1 }, (_, index) => start + index);
-  const blockHashes = await Promise.all(heights.map((height) => rpc("getblockhash", [height], signal)));
+  const blockHashes = await Promise.all(heights.map((height) => rpc("getblockhash", [height], signal, { ...trace, blockHeight: height })));
   if (blockHashes.some((hash) => typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash))) {
     throw new Error("SNAPSHOT_UNAVAILABLE");
   }
-  const decodedBlocks = await Promise.all(blockHashes.map((hash) => rpc("getblock", [hash, 2], signal)));
+  const decodedBlocks = await Promise.all(blockHashes.map((hash, index) => rpc("getblock", [hash, 2], signal, { ...trace, blockHeight: heights[index] })));
   const blocks: PublicActionBlock[] = [];
   let previousHash: string | undefined;
   for (let index = 0; index < heights.length; index++) {
@@ -218,25 +259,27 @@ export async function getPublicActionBlocks(snapshotHeight: number, start: numbe
     previousHash = block.hash!.toLowerCase();
     blocks.push({ height, hash: previousHash, transactions });
   }
-  const currentEndHash = await rpc("getblockhash", [end], signal);
-  const currentSnapshotHash = await rpc("getblockhash", [snapshotHeight], signal);
+  const currentEndHash = await rpc("getblockhash", [end], signal, { ...trace, blockHeight: end });
+  const currentSnapshotHash = await rpc("getblockhash", [snapshotHeight], signal, trace);
   if (currentEndHash !== canonicalEndHash || currentSnapshotHash !== snapshotHash) throw new Error("SNAPSHOT_UNAVAILABLE");
   return blocks;
 }
 
-async function deriveSnapshot(height: number, blockHash: string, commitmentRoot: string, controller: AbortController): Promise<Snapshot> {
+async function deriveSnapshot(height: number, blockHash: string, commitmentRoot: string, controller: AbortController, trace: RpcTrace): Promise<Snapshot> {
   const signal = controller.signal;
   const nullifiers: string[] = [];
   let previousHash: string | undefined;
+  trace.stage = "snapshot_scan";
   for (let start = 1; start <= height; start += 16) {
     if (signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
     const end = Math.min(height, start + 15);
     const requests = Array.from({ length: end - start + 1 }, async (_, index) => {
-      const expectedHash = await rpc("getblockhash", [start + index], signal);
+      const blockHeight = start + index;
+      const expectedHash = await rpc("getblockhash", [blockHeight], signal, { ...trace, blockHeight });
       if (typeof expectedHash !== "string" || !/^[0-9a-f]{64}$/i.test(expectedHash)) {
         throw new Error("SNAPSHOT_UNAVAILABLE");
       }
-      return { expectedHash, block: await rpc("getblock", [expectedHash, 2], signal) as DecodedBlock };
+      return { expectedHash, block: await rpc("getblock", [expectedHash, 2], signal, { ...trace, blockHeight }) as DecodedBlock };
     });
     let blocks: Array<{ expectedHash: string; block: DecodedBlock }>;
     try {
@@ -274,26 +317,34 @@ async function deriveSnapshot(height: number, blockHash: string, commitmentRoot:
     throw new Error("SNAPSHOT_UNAVAILABLE");
   }
   if (signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+  trace.stage = "snapshot_exclusion_root";
   const exclusionRoot = await deriveExclusionRoot(nullifiers, signal);
-  const canonicalHash = await rpc("getblockhash", [height], signal);
+  trace.stage = "snapshot_reorg_check";
+  const canonicalHash = await rpc("getblockhash", [height], signal, trace);
   if (canonicalHash !== blockHash) throw new Error("SNAPSHOT_UNAVAILABLE");
   return { commitmentRoot, exclusionRoot };
 }
 
-export async function resolveSnapshot(height: number, parentSignal?: AbortSignal): Promise<{ commitmentRoot: string; exclusionRoot: string }> {
+export async function resolveSnapshot(height: number, parentSignal?: AbortSignal, requestId?: string): Promise<{ commitmentRoot: string; exclusionRoot: string }> {
   const controller = new AbortController();
+  const trace: RpcTrace = { requestId, stage: "snapshot_network", snapshotHeight: height };
   const abortParent = () => controller.abort();
   parentSignal?.addEventListener("abort", abortParent, { once: true });
   if (parentSignal?.aborted) controller.abort();
-  const deadline = setTimeout(() => controller.abort(), SNAPSHOT_DEADLINE_MS);
+  const startedAt = performance.now();
+  let deadlineExceeded = false;
+  const deadline = setTimeout(() => { deadlineExceeded = true; controller.abort(); }, SNAPSHOT_DEADLINE_MS);
   try {
     if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
-    const chain = await rpc("getblockchaininfo", [], controller.signal) as ChainInfo;
-    await requireConfiguredNetwork(chain, controller.signal);
+    trace.stage = "snapshot_network";
+    const chain = await rpc("getblockchaininfo", [], controller.signal, trace) as ChainInfo;
+    await requireConfiguredNetwork(chain, controller.signal, trace);
     if (!Number.isInteger(chain.blocks) || height > chain.blocks!) throw new Error("INVALID_SNAPSHOT");
-    const hash = await rpc("getblockhash", [height], controller.signal);
+    trace.stage = "snapshot_hash";
+    const hash = await rpc("getblockhash", [height], controller.signal, trace);
     if (typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash)) throw new Error("SNAPSHOT_UNAVAILABLE");
-    const state = await rpc("z_gettreestate", [hash], controller.signal) as {
+    trace.stage = "snapshot_treestate";
+    const state = await rpc("z_gettreestate", [hash], controller.signal, trace) as {
       height?: number; orchard?: { commitments?: { finalRoot?: string } };
     };
     const root = state.orchard?.commitments?.finalRoot;
@@ -307,10 +358,11 @@ export async function resolveSnapshot(height: number, parentSignal?: AbortSignal
       snapshotCache.set(key, snapshot);
       return await waitForSignal(snapshot, controller.signal);
     }
+    trace.stage = "snapshot_scan_admission";
     if (activeSnapshotKey) throw new Error("SNAPSHOT_UNAVAILABLE");
 
     activeSnapshotKey = key;
-    snapshot = deriveSnapshot(height, hash, root, controller)
+    snapshot = deriveSnapshot(height, hash, root, controller, trace)
       .catch((error: unknown) => {
         if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
         throw error;
@@ -329,6 +381,25 @@ export async function resolveSnapshot(height: number, parentSignal?: AbortSignal
     }
     return await snapshot;
   } catch (error) {
+    const errorCode = error instanceof Error ? error.message : "";
+    const failureCategory = deadlineExceeded ? "snapshot_deadline"
+      : parentSignal?.aborted ? "parent_abort"
+        : errorCode === "ZCASH_RPC_UNAVAILABLE" ? "rpc_unavailable"
+          : errorCode === "VERIFIER_UNAVAILABLE" ? "verifier_unavailable"
+            : errorCode === "INVALID_SNAPSHOT" ? "invalid_snapshot"
+            : errorCode === "NETWORK_MISMATCH" ? "network_mismatch"
+              : errorCode === "ZSA_UNSUPPORTED" ? "protocol_inactive"
+                : errorCode === "SNAPSHOT_UNAVAILABLE" ? "snapshot_unavailable"
+                  : controller.signal.aborted ? "snapshot_aborted" : "snapshot_failure";
+    console.error(JSON.stringify({
+      event: "snapshot_failed",
+      requestId,
+      stage: trace.stage,
+      snapshotHeight: height,
+      durationMs: Math.round(performance.now() - startedAt),
+      failureCategory,
+      aborted: controller.signal.aborted,
+    }));
     if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
     throw error;
   } finally {
