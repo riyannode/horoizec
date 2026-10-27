@@ -8,7 +8,7 @@ From the repository root:
 
 ```sh
 (cd backend/rust && cargo +1.99.1 build --locked --release --bin horoi-verifier)
-(cd backend && bun install --frozen-lockfile && bun run check && bun test --parallel=1 && bun run build)
+(cd backend && bun install --frozen-lockfile && bun run check && bun test --timeout=30000 --parallel=1 && bun run build)
 (cd frontend && bun install --frozen-lockfile && bun run check && bun run build)
 (cd backend/rust && cargo +1.99.1 fmt --check)
 (cd backend/rust && cargo +1.99.1 check --locked --all-targets)
@@ -24,6 +24,8 @@ docker compose down -v --remove-orphans
 For the HTTP/browser acceptance, open `/demo` in a browser, verify that the valid fixture returns `valid: true`, the tampered fixture returns `INVALID_PROOF`, and the replay sequence returns HTTP 201 followed by HTTP 409 `NULLIFIER_USED`. Check that backend is healthy before frontend, only frontend publishes a port, and no public RPC request or snapshot scan occurs. Repeat after `down -v`; this reset removes only `horoi-judge` resources. The actual Docker results for this checkout are recorded in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
 
 The browser WASM build also needs wasm32-unknown-unknown, wasm-bindgen-cli 0.2.129, and Clang 18; see [SETUP.md](SETUP.md).
+
+The backend test timeout is 30 seconds because demo fixture initialization invokes the native Rust verifier before the test assertions run.
 
 ## Browser acceptance evidence
 
