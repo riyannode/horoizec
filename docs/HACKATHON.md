@@ -82,7 +82,7 @@ The final browser recording is 111.92 seconds in WebM format. It uses the public
 | 87–99 s | Three evaluation surfaces | Full app, hosted synthetic demo, and Docker Judge command with the latest verified-revision caveat. |
 | 99–112 s | Privacy and limitations | Keys and witness stay browser-local; testnet-only, one normal note, unaudited, no person-level uniqueness; cold-scan reliability unresolved. |
 
-The recording is available locally in the task outputs as `Horoi-ZECATHON-2026-Demo-final.webm`. It is not stored in the repository or published, so no public video URL is available. The submission form remains unsubmitted.
+The final 111.92-second WebM recording is a local task artifact, not stored in the repository or published. No public video URL is available. The submission form remains unsubmitted.
 
 ## Prepared submission fields
 
