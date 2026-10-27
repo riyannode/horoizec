@@ -30,7 +30,7 @@ Request JSON: `{ "fixtureId": "judge-hcp1" }`. Each request creates a temporary 
 
 Response 200: `{ "firstSubmission": { "accepted": true }, "replay": { "accepted": false, "errorCode": "NULLIFIER_USED" }, "replayProtection": "note-level", "state": "isolated-sqlite-per-run", "alternateNullifier": string }`. These are the results of the two real verifier/database operations inside one walkthrough request, not simulated HTTP 201/409 responses.
 
-In demo mode, crypto routes have a process-wide budget of 48 verifier-operation units per minute, an 8-unit per-client budget when `HOROI_TRUST_PROXY_CLIENT_IP=true` and a valid `X-Horoi-Client-IP` is supplied by the configured proxy, a two-operation concurrency cap, and at most 256 client buckets. `/demo/submit` costs two units. Rejections return HTTP 429 with `Retry-After`. Normal mode keeps the existing verifier admission behavior. `X-Forwarded-For` is never used as client identity.
+Crypto routes have a process-wide budget of 48 operation units per minute, an 8-unit per-client budget when `HOROI_TRUST_PROXY_CLIENT_IP=true` and a valid `X-Horoi-Client-IP` is supplied by the configured proxy, a two-operation concurrency cap in demo mode, and at most 256 client buckets. Claim submission and demo submission cost two units. Rejections return HTTP 429 with `Retry-After`. `X-Forwarded-For` is never used as client identity. Live claim creation also has a 4-per-15-minute process limit and one-per-client limit when trusted identity is available; schema and native AssetId validation happen first. Live claim creation, proof verification, claim submission, and action-range requests have a 14-minute deadline that propagates client disconnects and timeout cancellation through native verification and RPC. A snapshot scan has a single-process admission gate and a 12-minute total deadline.
 
 Demo mode also returns DEMO_READ_ONLY (403) for claim creation and public action-range fetching. These safeguards prevent cold public-chain scanning in Docker.
 
@@ -52,11 +52,11 @@ Errors: CLAIM_NOT_FOUND (404).
 
 ## GET /snapshots/:height/actions?start=&end=
 
-Request: snapshot height in the path and inclusive start/end heights in query. The range must be ordered, within the snapshot, and at most 16 blocks.
+Request: snapshot height in the path and inclusive start/end heights in query. The range must be ordered, within the snapshot, and at most 16 blocks. Live mode also limits action-range requests to 120 per trusted client and 600 globally per minute.
 
 Response 200: { "blocks": [ { "height", "hash", "transactions": [ { "actions": [ { "nullifier", "cmx", "ephemeralKey", "encCiphertext" } ], "issuanceNotes": [ { "cmx", "assetBase", "recipient", "value", "rho", "rseed" } ] } ] } ] }. These are public chain fields; issuance records let the browser reconstruct notes locally.
 
-Errors: INVALID_SNAPSHOT (400), NETWORK_MISMATCH (400), MAINNET_DISABLED (403), ZSA_UNSUPPORTED (400), SNAPSHOT_UNAVAILABLE (503), ZCASH_RPC_UNAVAILABLE (503).
+Errors: INVALID_SNAPSHOT (400), NETWORK_MISMATCH (400), MAINNET_DISABLED (403), ZSA_UNSUPPORTED (400), RATE_LIMITED (429), SNAPSHOT_UNAVAILABLE (503), ZCASH_RPC_UNAVAILABLE (503).
 
 ## POST /claims
 

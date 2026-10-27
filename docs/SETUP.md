@@ -12,7 +12,7 @@ docker compose up --build
 
 Then open [http://localhost:3000/demo](http://localhost:3000/demo). This is the zero-credential judge mode: no `.env`, wallet, QEDIT RPC, public scan, payment, or transaction. The build uses pinned Rust 1.99.1 and Bun 1.4.3 base images plus `Cargo.lock` and each Bun lockfile. It builds the native verifier and Next.js production server from source; it does not use prebuilt WSL artifacts. Docker's x86_64/Linux build path was exercised in this task; arm64 is not yet acceptance-tested.
 
-The first startup derives and verifies the pinned HCP1 fixture with Rust before backend health is declared. SQLite persists in the `horoi-judge_horoi_data` volume. To reset only the judge project and its replay state, use `docker compose down -v --remove-orphans`. See [DEMO.md](DEMO.md) for scenario and provenance details and [DEPLOYMENT.md](DEPLOYMENT.md) for the isolated public-Docker profile.
+The first startup derives and verifies the pinned HCP1 fixture with Rust before Judge backend health is declared. SQLite persists in the `horoi-judge_horoi_data` volume. To reset only the Judge project and its replay state, use `docker compose down -v --remove-orphans`. See [DEMO.md](DEMO.md) for scenario and provenance details, and [THREE_SURFACES.md](THREE_SURFACES.md) plus [DEPLOYMENT.md](DEPLOYMENT.md) for public live/demo configuration.
 
 ## Environment
 

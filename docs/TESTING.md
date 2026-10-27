@@ -25,7 +25,7 @@ For the HTTP/browser acceptance, open `/demo` in a browser, verify that the vali
 
 The browser WASM build also needs wasm32-unknown-unknown, wasm-bindgen-cli 0.2.129, and Clang 18; see [SETUP.md](SETUP.md).
 
-The backend test timeout is 30 seconds because demo fixture initialization invokes the native Rust verifier before the test assertions run.
+The backend test timeout is 30 seconds because demo fixture initialization invokes the native Rust verifier before the test assertions run. Keep `--parallel=1`: the suite shares its in-memory server module state and advances the mocked wall clock after exercising the global rate window.
 
 ## Browser acceptance evidence
 

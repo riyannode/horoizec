@@ -1049,6 +1049,16 @@ provenance, must not imply public-testnet evidence or browser-local proof
 generation, and must add no other product route. The original five routes
 remain the MVP route set.
 
+Runtime surfaces (2026-10-27): preserve the root Compose file as the local,
+zero-credential Judge surface. The standalone public Compose file runs separate
+testnet-live and synthetic-demo backend services with separate private
+networks and project-scoped SQLite volumes. The demo backend has no egress;
+the live backend alone has RPC egress. The public frontend routes `/demo` API
+calls to the synthetic service and other API calls to the live service. Only
+the frontend is published, on loopback behind the existing HTTPS proxy. Keep
+the local Judge backend private while its frontend joins the local edge bridge.
+See `docs/THREE_SURFACES.md` for request limits and operational boundaries.
+
 Design polish happens after protocol works.
 
 No launchpad UI.
@@ -1643,8 +1653,14 @@ state reset instructions.
 
 21.11 docs/DEPLOYMENT.md
 
-Separate public Docker Compose profile, loopback proxy boundary, and scoped
+Document the local Judge, public live API, and public synthetic demo Compose
+surfaces, loopback proxy boundary, separate networks/volumes, and scoped
 deployment/reset commands.
+
+21.12 docs/THREE_SURFACES.md
+
+Document the three runtime purposes, route mapping, network isolation, and
+finite request/admission bounds. Do not claim a cold-scan throughput guarantee.
     limitations
     references
 

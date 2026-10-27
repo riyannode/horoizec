@@ -13,6 +13,23 @@ import { z } from "zod";
 
 type Variables = { requestId: string };
 const app = new Hono<{ Variables: Variables }>();
+const ROUTE_DEADLINE_MS = 14 * 60_000;
+async function withRouteDeadline<T>(c: Context<{ Variables: Variables }>, operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const requestSignal = c.req.raw.signal;
+  const abortRequest = () => controller.abort();
+  const deadline = setTimeout(abortRequest, ROUTE_DEADLINE_MS);
+  requestSignal.addEventListener("abort", abortRequest, { once: true });
+  if (requestSignal.aborted) controller.abort();
+  try {
+    if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+    return await operation(controller.signal);
+  } finally {
+    controller.abort();
+    clearTimeout(deadline);
+    requestSignal.removeEventListener("abort", abortRequest);
+  }
+}
 const messages: Record<string, string> = {
   BAD_REQUEST: "The request is invalid.",
   CLAIM_NOT_FOUND: "The claim was not found.",
@@ -34,6 +51,7 @@ const messages: Record<string, string> = {
   DEMO_REPLAY_CHECK_FAILED: "The isolated SQLite replay fixture did not reject its duplicate nullifier.",
   NETWORK_MISMATCH: "The configured node is not the selected testnet or regtest network.",
   ZSA_UNSUPPORTED: "The configured chain has not activated OrchardZSA support.",
+  RATE_LIMITED: "The verifier is busy. Try again shortly.",
   INTERNAL_ERROR: "An internal error occurred."
 };
 app.use("*", cors({ origin: ["http://localhost:3000", "http://127.0.0.1:3000"], allowMethods: ["GET", "POST"], allowHeaders: ["content-type"] }));
@@ -48,8 +66,10 @@ app.use("*", async (c, next) => {
 });
 app.onError((error, c) => {
   const code = Object.hasOwn(messages, error.message) ? error.message : "INTERNAL_ERROR";
-  const status = code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
-  return c.json({ error: { code, message: messages[code] ?? messages.BAD_REQUEST, requestId: c.get("requestId") } }, status);
+  const status = code === "RATE_LIMITED" ? 429 : code === "INTERNAL_ERROR" ? 500 : code === "CLAIM_NOT_FOUND" ? 404 : code === "NULLIFIER_USED" || code === "SNAPSHOT_STALE" ? 409 : code === "CLAIM_EXPIRED" ? 410 : code === "MAINNET_DISABLED" || code === "DEMO_READ_ONLY" ? 403 : code.endsWith("_UNAVAILABLE") || code === "DEMO_FIXTURE_INVALID" || code === "DEMO_TAMPER_CHECK_FAILED" || code === "DEMO_REPLAY_CHECK_FAILED" ? 503 : 400;
+  const response = c.json({ error: { code, message: messages[code] ?? messages.BAD_REQUEST, requestId: c.get("requestId") } }, status);
+  if (code === "RATE_LIMITED") response.headers.set("Retry-After", "2");
+  return response;
 });
 
 app.get("/api/v1/health", (c) => c.json({ ok: true, version: "1.0.0", network: config.NETWORK_ID }));
@@ -63,14 +83,13 @@ let cryptoWindowStartedAt = Date.now();
 let cryptoRequests = 0;
 let activeVerifications = 0;
 const clientBuckets = new Map<string, ClientBucket>();
-async function limitDemoCrypto(c: Context<{ Variables: Variables }>, next: Next) {
-  if (!config.HOROI_DEMO_MODE) return next();
+async function limitCrypto(c: Context<{ Variables: Variables }>, next: Next) {
   const now = Date.now();
   if (now - cryptoWindowStartedAt >= CRYPTO_WINDOW_MS) {
     cryptoWindowStartedAt = now;
     cryptoRequests = 0;
   }
-  const cost = c.req.path === "/api/v1/demo/submit" ? 2 : 1;
+  const cost = c.req.path.endsWith("/submit") ? 2 : 1;
   const proxyAddress = config.HOROI_TRUST_PROXY_CLIENT_IP ? c.req.header("x-horoi-client-ip") : undefined;
   const clientAddress = proxyAddress && isIP(proxyAddress) ? proxyAddress : undefined;
   for (const [address, bucket] of clientBuckets) {
@@ -79,8 +98,8 @@ async function limitDemoCrypto(c: Context<{ Variables: Variables }>, next: Next)
   const reject = (retryAfterMs: number) => c.json({
     error: { code: "RATE_LIMITED", message: "The verifier is busy. Try again shortly.", requestId: c.get("requestId") },
   }, 429, { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) });
-  if (activeVerifications >= MAX_CONCURRENT_VERIFICATIONS) return reject(2_000);
   if (cryptoRequests + cost > GLOBAL_CRYPTO_LIMIT) return reject(CRYPTO_WINDOW_MS - (now - cryptoWindowStartedAt));
+  if (config.HOROI_DEMO_MODE && activeVerifications >= MAX_CONCURRENT_VERIFICATIONS) return reject(2_000);
 
   let clientBucket: ClientBucket | undefined;
   if (clientAddress) {
@@ -100,7 +119,7 @@ async function limitDemoCrypto(c: Context<{ Variables: Variables }>, next: Next)
   }
 
   cryptoRequests += cost;
-  activeVerifications++;
+  if (config.HOROI_DEMO_MODE) activeVerifications++;
   if (clientBucket) {
     clientBucket.requests += cost;
     clientBucket.active++;
@@ -108,21 +127,115 @@ async function limitDemoCrypto(c: Context<{ Variables: Variables }>, next: Next)
   try {
     await next();
   } finally {
-    activeVerifications--;
+    if (config.HOROI_DEMO_MODE) activeVerifications--;
     if (clientBucket) clientBucket.active--;
   }
 }
-app.use("/api/v1/proofs/verify", limitDemoCrypto);
-app.use("/api/v1/claims/:id/submit", limitDemoCrypto);
-app.use("/api/v1/demo/verify", limitDemoCrypto);
-app.use("/api/v1/demo/submit", limitDemoCrypto);
-async function assertActiveSnapshot(claim: NonNullable<ReturnType<typeof getClaim>>) {
+app.use("/api/v1/claims", async (c, next) => {
+  if (!config.HOROI_DEMO_MODE && c.req.method === "POST" && c.req.path === "/api/v1/claims") return limitCrypto(c, next);
+  return next();
+});
+app.use("/api/v1/proofs/verify", limitCrypto);
+app.use("/api/v1/claims/:id/submit", limitCrypto);
+app.use("/api/v1/demo/verify", limitCrypto);
+app.use("/api/v1/demo/submit", limitCrypto);
+const ACTION_WINDOW_MS = 60_000;
+const GLOBAL_ACTION_RANGE_LIMIT = 600;
+const CLIENT_ACTION_RANGE_LIMIT = 120;
+let actionWindowStartedAt = Date.now();
+let actionRangeRequests = 0;
+const actionClientBuckets = new Map<string, ClientBucket>();
+
+async function limitActionRanges(c: Context<{ Variables: Variables }>, next: Next) {
+  if (config.HOROI_DEMO_MODE) return next();
+  const now = Date.now();
+  if (now - actionWindowStartedAt >= ACTION_WINDOW_MS) {
+    actionWindowStartedAt = now;
+    actionRangeRequests = 0;
+  }
+  const proxyAddress = config.HOROI_TRUST_PROXY_CLIENT_IP ? c.req.header("x-horoi-client-ip") : undefined;
+  const clientAddress = proxyAddress && isIP(proxyAddress) ? proxyAddress : undefined;
+  const reject = (retryAfterMs: number) => c.json({
+    error: { code: "RATE_LIMITED", message: messages.RATE_LIMITED, requestId: c.get("requestId") },
+  }, 429, { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) });
+  if (actionRangeRequests >= GLOBAL_ACTION_RANGE_LIMIT) return reject(ACTION_WINDOW_MS - (now - actionWindowStartedAt));
+
+  let clientBucket: ClientBucket | undefined;
+  if (clientAddress) {
+    for (const [address, bucket] of actionClientBuckets) {
+      if (!bucket.active && now - bucket.windowStartedAt >= ACTION_WINDOW_MS) actionClientBuckets.delete(address);
+    }
+    clientBucket = actionClientBuckets.get(clientAddress);
+    if (!clientBucket) {
+      if (actionClientBuckets.size >= MAX_CLIENT_BUCKETS) return reject(ACTION_WINDOW_MS);
+      clientBucket = { windowStartedAt: now, requests: 0, active: 0 };
+      actionClientBuckets.set(clientAddress, clientBucket);
+    } else if (now - clientBucket.windowStartedAt >= ACTION_WINDOW_MS) {
+      clientBucket.windowStartedAt = now;
+      clientBucket.requests = 0;
+    }
+    if (clientBucket.requests >= CLIENT_ACTION_RANGE_LIMIT) {
+      return reject(ACTION_WINDOW_MS - (now - clientBucket.windowStartedAt));
+    }
+    clientBucket.requests++;
+  }
+  actionRangeRequests++;
+  await next();
+}
+
+const SNAPSHOT_CREATION_WINDOW_MS = 15 * 60_000;
+const GLOBAL_SNAPSHOT_CREATION_LIMIT = 4;
+const CLIENT_SNAPSHOT_CREATION_LIMIT = 1;
+let snapshotCreationWindowStartedAt = Date.now();
+let snapshotCreations = 0;
+const snapshotCreationClients = new Map<string, ClientBucket>();
+
+function admitSnapshotCreation(c: Context<{ Variables: Variables }>): Response | undefined {
+  const now = Date.now();
+  if (now - snapshotCreationWindowStartedAt >= SNAPSHOT_CREATION_WINDOW_MS) {
+    snapshotCreationWindowStartedAt = now;
+    snapshotCreations = 0;
+  }
+  const proxyAddress = config.HOROI_TRUST_PROXY_CLIENT_IP ? c.req.header("x-horoi-client-ip") : undefined;
+  const clientAddress = proxyAddress && isIP(proxyAddress) ? proxyAddress : undefined;
+  const reject = (retryAfterMs: number) => c.json({
+    error: { code: "RATE_LIMITED", message: messages.RATE_LIMITED, requestId: c.get("requestId") },
+  }, 429, { "Retry-After": String(Math.max(1, Math.ceil(retryAfterMs / 1000))) });
+  if (snapshotCreations >= GLOBAL_SNAPSHOT_CREATION_LIMIT) {
+    return reject(SNAPSHOT_CREATION_WINDOW_MS - (now - snapshotCreationWindowStartedAt));
+  }
+  let bucket: ClientBucket | undefined;
+  if (clientAddress) {
+    for (const [address, entry] of snapshotCreationClients) {
+      if (!entry.active && now - entry.windowStartedAt >= SNAPSHOT_CREATION_WINDOW_MS) snapshotCreationClients.delete(address);
+    }
+    bucket = snapshotCreationClients.get(clientAddress);
+    if (!bucket) {
+      if (snapshotCreationClients.size >= MAX_CLIENT_BUCKETS) return reject(SNAPSHOT_CREATION_WINDOW_MS);
+      bucket = { windowStartedAt: now, requests: 0, active: 0 };
+      snapshotCreationClients.set(clientAddress, bucket);
+    } else if (now - bucket.windowStartedAt >= SNAPSHOT_CREATION_WINDOW_MS) {
+      bucket.windowStartedAt = now;
+      bucket.requests = 0;
+    }
+    if (bucket.requests >= CLIENT_SNAPSHOT_CREATION_LIMIT) {
+      return reject(SNAPSHOT_CREATION_WINDOW_MS - (now - bucket.windowStartedAt));
+    }
+  }
+  snapshotCreations++;
+  if (bucket) bucket.requests++;
+  return undefined;
+}
+
+app.use("/api/v1/snapshots/*", limitActionRanges);
+
+async function assertActiveSnapshot(claim: NonNullable<ReturnType<typeof getClaim>>, signal?: AbortSignal) {
   if (config.HOROI_DEMO_MODE) {
     if (!pinnedDemoStatementMatches(claim)) throw new Error("SNAPSHOT_STALE");
     return;
   }
   if (claim.networkId !== config.NETWORK_ID) throw new Error("SNAPSHOT_STALE");
-  const snapshot = await resolveSnapshot(claim.snapshotHeight);
+  const snapshot = await resolveSnapshot(claim.snapshotHeight, signal);
   if (snapshot.commitmentRoot.toLowerCase() !== claim.commitmentRoot.toLowerCase() || snapshot.exclusionRoot.toLowerCase() !== claim.exclusionRoot.toLowerCase()) {
     throw new Error("SNAPSHOT_STALE");
   }
@@ -131,18 +244,19 @@ async function acceptProof(
   claim: NonNullable<ReturnType<typeof getClaim>>,
   input: ReturnType<typeof verifySchema.parse>,
   consume = consumeNullifier,
+  signal?: AbortSignal,
 ) {
   const result = await verifyProof({
     networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
     snapshotHeight: claim.snapshotHeight, commitmentRoot: claim.commitmentRoot,
     exclusionRoot: claim.exclusionRoot, expiresAt: claim.expiresAt, creatorNonce: claim.creatorNonce
-  }, Buffer.from(input.proof, "base64").toString("hex"));
+  }, Buffer.from(input.proof, "base64").toString("hex"), signal);
   if (!result.valid) throw new Error("PROOF_INVALID");
   const submittedNullifier = input.alternateNullifiers[0];
   if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
     throw new Error("PROOF_INPUT_MISMATCH");
   }
-  await assertActiveSnapshot(claim);
+  await assertActiveSnapshot(claim, signal);
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
   if (!consume(claim.id, result.alternateNullifier)) throw new Error("NULLIFIER_USED");
   return result.alternateNullifier;
@@ -169,7 +283,7 @@ app.get("/api/v1/snapshots/:height/actions", async (c) => {
   const start = Number(c.req.query("start"));
   const end = Number(c.req.query("end"));
   if (![snapshotHeight, start, end].every(Number.isSafeInteger)) throw new Error("INVALID_SNAPSHOT");
-  return c.json({ blocks: await getPublicActionBlocks(snapshotHeight, start, end) });
+  return await withRouteDeadline(c, async (signal) => c.json({ blocks: await getPublicActionBlocks(snapshotHeight, start, end, signal) }));
 });
 app.get("/api/v1/claims/:id", (c) => {
   const claim = getClaim(c.req.param("id"));
@@ -184,25 +298,29 @@ app.post("/api/v1/claims", async (c) => {
     throw new Error(field === "assetId" ? "INVALID_ASSET_ID" : field === "threshold" ? "INVALID_THRESHOLD" : field === "snapshotHeight" ? "INVALID_SNAPSHOT" : "BAD_REQUEST");
   }
   const input = parsed.data;
-  await validateAssetId(input.assetId);
-  const snapshot = await resolveSnapshot(input.snapshotHeight);
-  const nonce = crypto.getRandomValues(new Uint8Array(32));
-  const statement = {
-    networkId: config.NETWORK_ID,
-    assetId: input.assetId.toLowerCase(),
-    threshold: input.threshold,
-    snapshotHeight: input.snapshotHeight,
-    commitmentRoot: snapshot.commitmentRoot,
-    exclusionRoot: snapshot.exclusionRoot,
-    expiresAt: input.expiresAt,
-    creatorNonce: Array.from(nonce, (v) => v.toString(16).padStart(2, "0")).join("")
-  };
-  const derived = await deriveClaim(statement);
-  const claim = saveClaim(input, {
-    id: derived.claimId!, networkId: config.NETWORK_ID, commitmentRoot: statement.commitmentRoot,
-    exclusionRoot: statement.exclusionRoot, claimDomain: derived.claimDomain!, creatorNonce: statement.creatorNonce
-  }, Math.floor(Date.now() / 1000));
-  return c.json({ claim }, 201);
+  return await withRouteDeadline(c, async (signal) => {
+    await validateAssetId(input.assetId, signal);
+    const admission = admitSnapshotCreation(c);
+    if (admission) return admission;
+    const snapshot = await resolveSnapshot(input.snapshotHeight, signal);
+    const nonce = crypto.getRandomValues(new Uint8Array(32));
+    const statement = {
+      networkId: config.NETWORK_ID,
+      assetId: input.assetId.toLowerCase(),
+      threshold: input.threshold,
+      snapshotHeight: input.snapshotHeight,
+      commitmentRoot: snapshot.commitmentRoot,
+      exclusionRoot: snapshot.exclusionRoot,
+      expiresAt: input.expiresAt,
+      creatorNonce: Array.from(nonce, (v) => v.toString(16).padStart(2, "0")).join("")
+    };
+    const derived = await deriveClaim(statement, signal);
+    const claim = saveClaim(input, {
+      id: derived.claimId!, networkId: config.NETWORK_ID, commitmentRoot: statement.commitmentRoot,
+      exclusionRoot: statement.exclusionRoot, claimDomain: derived.claimDomain!, creatorNonce: statement.creatorNonce
+    }, Math.floor(Date.now() / 1000));
+    return c.json({ claim }, 201);
+  });
 });
 app.post("/api/v1/proofs/verify", async (c) => {
   const parsed = verifySchema.safeParse(await parseJsonBody(c));
@@ -211,28 +329,30 @@ app.post("/api/v1/proofs/verify", async (c) => {
   const claim = getClaim(input.claimId);
   if (!claim || (config.HOROI_DEMO_MODE && !isDemoClaim(claim.id))) throw new Error("CLAIM_NOT_FOUND");
   if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
-  const result = await verifyProof({
-    networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
-    snapshotHeight: claim.snapshotHeight, commitmentRoot: claim.commitmentRoot,
-    exclusionRoot: claim.exclusionRoot, expiresAt: claim.expiresAt, creatorNonce: claim.creatorNonce
-  }, Buffer.from(input.proof, "base64").toString("hex"));
-  if (!result.valid) return c.json({ valid: false, claimId: claim.id });
-  const submittedNullifier = input.alternateNullifiers[0];
-  if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
-    throw new Error("PROOF_INPUT_MISMATCH");
-  }
-  await assertActiveSnapshot(claim);
-  if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
-  return c.json({
-    valid: true,
-    claimId: claim.id,
-    statement: {
-      assetId: claim.assetId,
-      threshold: claim.threshold,
-      snapshotHeight: claim.snapshotHeight,
-      protocolVersion: claim.protocolVersion,
-    },
-    alternateNullifier: result.alternateNullifier,
+  return await withRouteDeadline(c, async (signal) => {
+    const result = await verifyProof({
+      networkId: claim.networkId, assetId: claim.assetId, threshold: claim.threshold,
+      snapshotHeight: claim.snapshotHeight, commitmentRoot: claim.commitmentRoot,
+      exclusionRoot: claim.exclusionRoot, expiresAt: claim.expiresAt, creatorNonce: claim.creatorNonce
+    }, Buffer.from(input.proof, "base64").toString("hex"), signal);
+    if (!result.valid) return c.json({ valid: false, claimId: claim.id });
+    const submittedNullifier = input.alternateNullifiers[0];
+    if (!result.alternateNullifier || !submittedNullifier || submittedNullifier.toLowerCase() !== result.alternateNullifier) {
+      throw new Error("PROOF_INPUT_MISMATCH");
+    }
+    await assertActiveSnapshot(claim, signal);
+    if (claim.expiresAt !== null && claim.expiresAt <= Math.floor(Date.now() / 1000)) throw new Error("CLAIM_EXPIRED");
+    return c.json({
+      valid: true,
+      claimId: claim.id,
+      statement: {
+        assetId: claim.assetId,
+        threshold: claim.threshold,
+        snapshotHeight: claim.snapshotHeight,
+        protocolVersion: claim.protocolVersion,
+      },
+      alternateNullifier: result.alternateNullifier,
+    });
   });
 });
 app.post("/api/v1/claims/:id/submit", async (c) => {
@@ -242,8 +362,10 @@ app.post("/api/v1/claims/:id/submit", async (c) => {
   const parsed = verifySchema.safeParse(await parseJsonBody(c));
   if (!parsed.success) throw new Error("BAD_REQUEST");
   if (parsed.data.claimId !== claim.id || parsed.data.protocolVersion !== claim.protocolVersion) throw new Error("PROOF_INPUT_MISMATCH");
-  await acceptProof(claim, parsed.data);
-  return c.json({ accepted: true, replayProtection: "note-level" });
+  return await withRouteDeadline(c, async (signal) => {
+    await acceptProof(claim, parsed.data, consumeNullifier, signal);
+    return c.json({ accepted: true, replayProtection: "note-level" });
+  });
 });
 
 app.get("/api/v1/demo/fixture", (c) => {

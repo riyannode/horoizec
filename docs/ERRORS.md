@@ -12,7 +12,7 @@ HTTP errors use { "error": { "code": "...", "message": "...", "requestId": "..."
 | ZSA_UNSUPPORTED | 400 | NU7 is not active on selected chain; retry after activation/configuration. | The configured chain has not activated OrchardZSA support. | Check upgrade status and network. |
 | MAINNET_DISABLED | 403 | Mainnet is outside prototype scope; do not retry there. | Mainnet is disabled for this prototype. | Use configured testnet or regtest. |
 | DEMO_READ_ONLY | 403 | Docker demo mode permits only its pinned claim and fixture routes. | Docker demo mode exposes only its pinned claim fixture. | Use the local development mode for chain-backed operations. |
-| RATE_LIMITED | 429 | Demo verifier has reached its shared 12-request-per-minute limit; retry after the minute window. | The demo verifier is busy. Try again shortly. | Check public traffic before changing the limit. |
+| RATE_LIMITED | 429 | A crypto, action-range, or snapshot-creation admission limit was reached; retry after the `Retry-After` interval. | The verifier is busy. Try again shortly. | Check traffic and the relevant per-process limit. |
 | CLAIM_NOT_FOUND | 404 | No claim has that ID; retry only with corrected ID. | The claim was not found. | Check local DB and ID. |
 | CLAIM_EXPIRED | 410 | Expiry has passed; create a new claim. | The claim has expired. | Check expiry configuration. |
 | SNAPSHOT_STALE | 409 | Stored roots or network no longer match active chain; create a new claim. | The claim snapshot no longer matches the active chain. | Check for reset, reorg, or DB/network mismatch. |

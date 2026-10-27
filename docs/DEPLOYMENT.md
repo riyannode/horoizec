@@ -1,15 +1,15 @@
 # Docker Deployment
 
-Horoi has two Docker Compose modes that use the same locked Bun/Next and Rust build configuration:
+Horoi has three runtime surfaces built from the same locked Bun/Next and Rust configuration. Run the Judge with the root Compose file; run the standalone public live and demo services with `docker-compose.public.yml`. See [THREE_SURFACES.md](THREE_SURFACES.md) for routing and resource bounds.
 
 | Mode | Command | Access |
 | --- | --- | --- |
 | Local judge | `docker compose up --build` | Frontend at `http://localhost:3000`; zero credentials and no public RPC. |
-| Public demo | `docker compose --project-name horoi-public -f docker-compose.yml -f docker-compose.public.yml --profile public up --build -d backend frontend-public` | Frontend bound to `127.0.0.1:3001` for an HTTPS reverse proxy. |
+| Public live and demo | `docker compose -f docker-compose.public.yml up --build -d` | Live API and synthetic demo behind frontend at `127.0.0.1:3001`. |
 
-The public deployment adds `docker-compose.public.yml`, which enables `HOROI_TRUST_PROXY_CLIENT_IP`. Use it only behind a proxy that overwrites `X-Horoi-Client-IP` with the actual connection peer address. The default judge Compose keeps proxy trust disabled. `X-Forwarded-For` is never used for rate-limit identity. The default judge build needs no `.env`; its image tag and `org.opencontainers.image.revision` label use `unknown`. For a release build, set `HOROI_SOURCE_SHA` to the checked-out commit so both image tags and revision labels identify that exact source commit.
+The public Compose configuration enables `HOROI_TRUST_PROXY_CLIENT_IP`. Use it only behind a proxy that overwrites `X-Horoi-Client-IP` with the actual connection peer address. The default judge Compose keeps proxy trust disabled. `X-Forwarded-For` is never used for rate-limit identity. The default judge build needs no `.env`; its image tag and `org.opencontainers.image.revision` label use `unknown`. For a release build, set `HOROI_SOURCE_SHA` to the checked-out commit so both image tags and revision labels identify that exact source commit.
 
-The public stack is project-isolated as `horoi-public`: its private network, persistent SQLite volume, and containers are separate from `horoi-judge` and other Compose projects. Only the frontend's loopback port is published. The backend, verifier process, and database have no host ports. Both modes use the pinned HCP1 fixture labeled LOCAL SYNTHETIC TEST FIXTURE and do not connect to QEDIT RPC or perform cold snapshot creation.
+The public stack is project-isolated as `horoi-public`: live and demo backends have separate internal networks and SQLite volumes. The live backend alone has egress to its configured testnet RPC. The demo backend has no egress. The frontend joins both networks and the edge bridge; only its loopback port is published. The `/demo` route uses the synthetic HCP1 fixture; other API routes reach the live backend. The Judge remains a separate, read-only synthetic environment.
 
 ## Authorized VPS procedure
 
@@ -19,17 +19,19 @@ Build and start the isolated project from the exact checked-out source revision:
 
 ```bash
 export HOROI_SOURCE_SHA="$(git rev-parse HEAD)"
-docker compose --project-name horoi-public -f docker-compose.yml -f docker-compose.public.yml --profile public up --build -d backend frontend-public
-docker compose --project-name horoi-public -f docker-compose.yml -f docker-compose.public.yml --profile public ps
-docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' horoi/horoi-backend:"$HOROI_SOURCE_SHA" horoi/horoi-frontend:"$HOROI_SOURCE_SHA"
+docker compose -f docker-compose.public.yml up --build -d
+docker compose -f docker-compose.public.yml ps
+docker image inspect --format '{{.Id}} {{index .Config.Labels "org.opencontainers.image.revision"}}' horoi/horoi-backend:"$HOROI_SOURCE_SHA" horoi/horoi-frontend-public:"$HOROI_SOURCE_SHA"
 curl --fail http://127.0.0.1:3001/demo
 ```
 
 Configure the existing proxy's Horoi hostname to forward HTTPS traffic to the loopback frontend. In that site block, set `X-Horoi-Client-IP` from the proxy's connection peer; strip/replace a caller-supplied value. Never expose backend port 8787. Validate the complete proxy config before a graceful reload, then check the public URL without authentication, `/demo`, proxied API routing, both container health checks, and the unrelated site's health. Record the deployed Git commit and image digests after the public response is live.
 
-Stop or reset only the public project with `docker compose --project-name horoi-public -f docker-compose.yml -f docker-compose.public.yml --profile public down` (preserves its volume) or append `-v` when an authorized full reset is intended. Do not use Docker prune commands.
+Stop or reset only the public project with `docker compose -f docker-compose.public.yml down` (preserves its volumes) or append `-v` when an authorized full reset is intended. Do not use Docker prune commands.
 
-## Verified public HTTPS route (2026-10-27)
+## Historical pre-correction HTTPS acceptance (2026-10-27)
+
+This record describes the earlier single-backend public deployment. The current source uses separate `backend-live` and `backend-demo` services as described above; this historical acceptance does not identify the corrected release or prove its browser-wallet flow.
 
 The public Docker demo is live at [https://horoi.kima.my.id](https://horoi.kima.my.id), with the judge walkthrough at [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo). `horoi.kima.my.id` resolves to `43.156.68.254`. From an external Windows client, both URLs returned HTTP 200 with `curl.exe` TLS verification result 0; an unauthenticated browser loaded `/demo` and rendered the genuine valid, tampered-proof, and replay results.
 
@@ -37,7 +39,9 @@ Caddy runs in `unmet-web-1` (image `unmet-web:af2c4a4d33a438364cd67e1f5f1576253a
 
 The recreated Caddy web container is healthy and retains its prior image, ports, environment, security settings, `172.30.80.2` address on `unmet_application`, and the `unmet_caddy_config` / `unmet_caddy_data` volumes. Its additional Horoi edge address is `172.18.0.3`. The UNMET API container ID remains `858c5caf1fd607c75c5ee47e2c3d7f775c7e7a152e47715fd609fc84755c6c90`; the `unmet_payment_data`, `unmet_caddy_data`, and `unmet_caddy_config` volume identities and mountpoints are unchanged. After recreation, UNMET `/`, `/health`, `/ready`, `/live`, and `/v1/demands` all returned HTTP 200.
 
-## Public release identity and acceptance (2026-10-27)
+## Historical pre-correction release identity and acceptance (2026-10-27)
+
+The following image and source identities belong to the earlier single-backend public deployment, before the three-surface configuration. Use the final release record supplied for the corrected deployment for current image identities and acceptance.
 
 The public Docker project is `horoi-public`. The deployed application source revision is `d6cc100968aa9975930d71213439d2b3c9c5dd01` (`feat/vercel-fullstack`, Draft PR #1). Both containers are healthy:
 

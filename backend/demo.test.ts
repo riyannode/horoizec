@@ -97,18 +97,39 @@ describe("Docker judge fixture", () => {
     expect(Number(limited?.headers.get("retry-after"))).toBeGreaterThan(0);
   });
 
-  it("keeps demo rate limits out of normal mode", async () => {
+  it("applies the global crypto budget in live mode without a trusted client identity", async () => {
     const { config } = await import("./config");
+    const realNow = Date.now;
+    const originalDemoMode = config.HOROI_DEMO_MODE;
+    const originalTrustProxy = config.HOROI_TRUST_PROXY_CLIENT_IP;
+    Date.now = () => realNow() + 61_000;
     config.HOROI_DEMO_MODE = false;
+    config.HOROI_TRUST_PROXY_CLIENT_IP = false;
     try {
+      let limited = false;
       for (let i = 0; i < 49; i++) {
         const response = await server.fetch(new Request("http://localhost/api/v1/proofs/verify", {
           method: "POST", headers: { "content-type": "application/json" }, body: "{}",
         }));
+        if (response.status === 429) {
+          limited = true;
+          expect(Number(response.headers.get("retry-after"))).toBeGreaterThan(0);
+          break;
+        }
         expect(response.status).toBe(400);
       }
+      expect(limited).toBe(true);
     } finally {
-      config.HOROI_DEMO_MODE = true;
+      try {
+        Date.now = () => realNow() + 122_000;
+        await server.fetch(new Request("http://localhost/api/v1/proofs/verify", {
+          method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+        }));
+      } finally {
+        Date.now = realNow;
+        config.HOROI_DEMO_MODE = originalDemoMode;
+        config.HOROI_TRUST_PROXY_CLIENT_IP = originalTrustProxy;
+      }
     }
   });
 

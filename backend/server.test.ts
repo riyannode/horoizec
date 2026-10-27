@@ -1,10 +1,16 @@
 import { beforeAll, describe, expect, it } from "bun:test";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 
 let server: typeof import("./server").default;
 let db: typeof import("./db").db;
+let Verifier: typeof import("./proof").Verifier;
 
 beforeAll(async () => {
   process.env.DATABASE_PATH = ":memory:";
+  ({ Verifier } = await import("./proof"));
   ({ default: server } = await import("./server"));
   ({ db } = await import("./db"));
 });
@@ -60,5 +66,175 @@ describe("malformed JSON request bodies", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: "BAD_REQUEST" } });
+  });
+});
+
+describe("native verifier timeout recovery", () => {
+  it("kills a timed-out child and starts a clean verifier for the next request", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "horoi-verifier-"));
+    const counterPath = join(directory, "starts");
+    const verifierPath = join(directory, "verifier");
+    const script = [
+      "#!/bin/sh",
+      "count=0",
+      "if [ -f '__COUNTER__' ]; then count=$(cat '__COUNTER__'); fi",
+      "count=$((count + 1))",
+      "printf '%s' \"$count\" > '__COUNTER__'",
+      "IFS= read -r request || exit 1",
+      "if [ \"$count\" -eq 1 ]; then while IFS= read -r request; do :; done; fi",
+      "echo '{\"valid\":true}'",
+      "",
+    ].join(String.fromCharCode(10)).replaceAll("__COUNTER__", counterPath);
+    await writeFile(verifierPath, script);
+    await chmod(verifierPath, 0o755);
+    try {
+      const verifier = new Verifier(verifierPath, 100);
+      await expect(verifier.request({ operation: "timeout" })).rejects.toThrow("VERIFIER_UNAVAILABLE");
+      await expect(verifier.request({ operation: "recovery" })).resolves.toEqual({ valid: true });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("snapshot creation admission", () => {
+  it("does not consume snapshot budget for invalid requests or AssetIds", async () => {
+    const { config } = await import("./config");
+    config.HOROI_DEMO_MODE = false;
+    config.HOROI_TRUST_PROXY_CLIENT_IP = false;
+    for (let i = 0; i < 4; i++) {
+      const invalid = await server.fetch(new Request("http://localhost/api/v1/claims", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }));
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({ error: { code: "BAD_REQUEST" } });
+    }
+    const invalidAsset = await server.fetch(new Request("http://localhost/api/v1/claims", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Invalid asset",
+        assetId: "00".repeat(66),
+        threshold: "1",
+        snapshotHeight: 1,
+        expiresAt: null,
+      }),
+    }));
+    expect(invalidAsset.status).toBe(400);
+    expect(await invalidAsset.json()).toMatchObject({ error: { code: "INVALID_ASSET_ID" } });
+  });
+});
+
+describe("native verifier cancellation", () => {
+  it("does not start work for an already-aborted request", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "horoi-verifier-already-aborted-"));
+    const startsPath = join(directory, "starts");
+    const verifierPath = join(directory, "verifier");
+    await writeFile(verifierPath, `#!/bin/sh\nprintf started > '${startsPath}'\n`);
+    await chmod(verifierPath, 0o755);
+    try {
+      const verifier = new Verifier(verifierPath);
+      const controller = new AbortController();
+      controller.abort();
+      await expect(verifier.request({ operation: "never-start" }, controller.signal)).rejects.toThrow("SNAPSHOT_UNAVAILABLE");
+      await expect(readFile(startsPath, "utf8")).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects queued cancellation immediately and never sends it to the child", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "horoi-verifier-queue-"));
+    const logPath = join(directory, "requests");
+    const releasePath = join(directory, "release");
+    const startsPath = join(directory, "starts");
+    const verifierPath = join(directory, "verifier");
+    const script = [
+      "#!/bin/sh",
+      "count=0",
+      "if [ -f '__STARTS__' ]; then count=$(cat '__STARTS__'); fi",
+      "count=$((count + 1))",
+      "printf '%s' \"$count\" > '__STARTS__'",
+      "while IFS= read -r request; do",
+      "echo \"$request\" >> '__LOG__'",
+      "if [ \"$request\" = '{\"operation\":\"first\"}' ]; then while [ ! -f '__RELEASE__' ]; do sleep 0.01; done; fi",
+      "echo '{\"valid\":true}'",
+      "done",
+      "",
+    ].join(String.fromCharCode(10))
+      .replaceAll("__LOG__", logPath)
+      .replaceAll("__RELEASE__", releasePath)
+      .replaceAll("__STARTS__", startsPath);
+    await writeFile(verifierPath, script);
+    await chmod(verifierPath, 0o755);
+    let firstPending: Promise<unknown> | undefined;
+    try {
+      const verifier = new Verifier(verifierPath, 5000);
+      const first = verifier.request({ operation: "first" });
+      firstPending = first;
+      let firstReceived = false;
+      for (let i = 0; i < 100; i++) {
+        try {
+          firstReceived = (await readFile(logPath, "utf8")).includes('"operation":"first"');
+        } catch {}
+        if (firstReceived) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(firstReceived).toBe(true);
+
+      const controller = new AbortController();
+      const queued = verifier.request({ operation: "cancelled" }, controller.signal);
+      const abortStartedAt = performance.now();
+      controller.abort();
+      await expect(queued).rejects.toThrow("SNAPSHOT_UNAVAILABLE");
+      expect(performance.now() - abortStartedAt).toBeLessThan(100);
+      expect((await readFile(logPath, "utf8")).trim().split(String.fromCharCode(10))).toHaveLength(1);
+
+      await writeFile(releasePath, "go");
+      await expect(first).resolves.toEqual({ valid: true });
+      firstPending = undefined;
+      await expect(verifier.request({ operation: "after" })).resolves.toEqual({ valid: true });
+      const requests = (await readFile(logPath, "utf8")).trim().split(String.fromCharCode(10));
+      expect(requests).toHaveLength(2);
+      expect(requests[1]).toContain('"operation":"after"');
+      expect((await readFile(startsPath, "utf8")).trim()).toBe("1");
+    } finally {
+      await writeFile(releasePath, "go").catch(() => undefined);
+      if (firstPending) await firstPending.catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("kills and reaps an active child when its scan signal aborts", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "horoi-verifier-abort-"));
+    const counterPath = join(directory, "starts");
+    const verifierPath = join(directory, "verifier");
+    const script = [
+      "#!/bin/sh",
+      "count=0",
+      "if [ -f '__COUNTER__' ]; then count=$(cat '__COUNTER__'); fi",
+      "count=$((count + 1))",
+      "printf '%s' \"$count\" > '__COUNTER__'",
+      "IFS= read -r request || exit 1",
+      "if [ \"$count\" -eq 1 ]; then while IFS= read -r request; do :; done; fi",
+      "echo '{\"valid\":true}'",
+      "",
+    ].join(String.fromCharCode(10)).replaceAll("__COUNTER__", counterPath);
+    await writeFile(verifierPath, script);
+    await chmod(verifierPath, 0o755);
+    try {
+      const verifier = new Verifier(verifierPath, 5000);
+      const controller = new AbortController();
+      const active = verifier.request({ operation: "cancel" }, controller.signal);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      controller.abort();
+      await expect(active).rejects.toThrow("SNAPSHOT_UNAVAILABLE");
+      await expect(verifier.request({ operation: "after-abort" })).resolves.toEqual({ valid: true });
+      expect((await readFile(counterPath, "utf8")).trim()).toBe("2");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

@@ -180,7 +180,7 @@ export default function ClaimDetails() {
             <p className="notice">This Docker fixture is not a live chain snapshot and has no browser proof-generation inputs. Run the separate server-side fixture verification scenarios on <Link href="/demo">the demo page</Link>.</p>
           ) : (
             <>
-              <p className="notice">Experimental, unaudited. This proof currently supports one normal note. The spending key, note scanning, and witness construction stay in this browser; only public chain data is downloaded and only the proof and alternate nullifier are submitted.</p>
+              <p className="notice">Experimental, unaudited. This proof currently supports one normal note. A cold scan downloads public actions in 16-block ranges and may take a long time. The spending key, note scanning, and witness construction stay in this browser; only public chain data is downloaded and only the proof and alternate nullifier are submitted.</p>
               <form className="proof-form" onSubmit={proveAndSubmit}>
                 <label>Testnet spending key (32-byte hex)<input ref={spendingKeyInput} type="password" autoComplete="off" required pattern="(?:[0-9a-fA-F]{2}){32}" /></label>
                 <p className="notice">Use a testnet-only key. It is processed locally and never sent to the backend. Do not use a mainnet key.</p>

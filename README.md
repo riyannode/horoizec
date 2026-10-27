@@ -4,6 +4,16 @@ Private ownership claims for Zcash Shielded Assets. Horoi is a ZECATHON Core & T
 
 The current experimental implementation proves that one normal OrchardZSA note meets a threshold at a fixed snapshot. A Rust circuit binds the ZIP 227 AssetId, Orchard commitment root, public-nullifier exclusion root, claim domain, and claim-specific spend authorization. The browser scans public chain data and creates the proof locally; the backend verifies it and stores note-level replay state.
 
+## Evaluation paths
+
+| Surface | URL or command | Evidence boundary |
+| --- | --- | --- |
+| Public application | [https://horoi.kima.my.id](https://horoi.kima.my.id) | Public testnet application backed by the live API service. A fresh browser-generated proof on the corrected release remains unverified. |
+| Public synthetic fixture | [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo) | Native HCP1 verification, tamper rejection, and isolated SQLite replay using the labeled local synthetic fixture. |
+| Local Judge | `docker compose up --build`, then [http://localhost:3000/demo](http://localhost:3000/demo) | Zero-credential synthetic Judge environment; its backend cannot reach public RPC. |
+
+These are separate routes and backend services. The fixture walkthrough does not establish a live-chain proof. Historical public QEDIT testnet proof acceptance is documented below and in [docs/PUBLIC_ZSA_E2E_REPORT.md](docs/PUBLIC_ZSA_E2E_REPORT.md); it is not a new proof from the corrected release.
+
 ## Docker Judge Quickstart
 
 Requirements: Git, Docker Engine, and Docker Compose v2. The default root Compose file is the zero-credential judge environment:
@@ -24,7 +34,7 @@ Reset only the local judge state and its named volume with:
 docker compose down -v --remove-orphans
 ```
 
-The separate public Docker Compose profile and HTTPS reverse-proxy setup are documented in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The `/demo` route is a documented ZECATHON judge-walkthrough exception to the original five-route MVP PRD; the five existing routes remain in place.
+Horoi has three runtime surfaces: the local synthetic Judge, a public testnet API, and a separate public synthetic demo. Their networks, volumes, routes, resource bounds, and commands are documented in [docs/THREE_SURFACES.md](docs/THREE_SURFACES.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The `/demo` route is a documented ZECATHON judge-walkthrough exception to the original five-route MVP PRD; the five existing routes remain in place.
 
 ## Evidence and limitations
 
