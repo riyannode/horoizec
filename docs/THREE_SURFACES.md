@@ -41,3 +41,16 @@ docker compose -f docker-compose.public.yml up --build -d
 This starts `backend-live`, `backend-demo`, and `frontend-public` under the `horoi-public` project. The frontend binds to `127.0.0.1:3001`; point the existing HTTPS proxy at `frontend-public:3000` on `horoi-public_edge`. See [DEPLOYMENT.md](DEPLOYMENT.md) for the proxy procedure and the deployment evidence record.
 
 The Judge fixture and public-demo `/demo` route remain synthetic. Historical public QEDIT testnet proof acceptance is recorded separately in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md); it does not establish a new browser-generated proof or cold-scan acceptance for a later deployment.
+
+## Current release acceptance (2026-10-27)
+
+Source `d4569b424d0c16dab41614fda3d1f2c82d78279d` is deployed, and `backend-live`, `backend-demo`, and `frontend-public` are healthy. Both backend images use digest `sha256:e77308498b15d1217c7b6fefa4ae16f2dbfeffab92ff0c36362da42ce1f5388a`; `frontend-public` uses `sha256:3055962377126f5f717ea693650295829bf3258d2c9b83557376e757eb362bdf`. The root application routes to `backend-live`; `/demo` routes to the isolated synthetic backend. See [DEPLOYMENT.md](DEPLOYMENT.md) for the measured acceptance record.
+
+| Gate | Current evidence | Status |
+| --- | --- | --- |
+| Public-chain snapshot integration | Canonical QEDIT testnet genesis and NU7 were confirmed; a block 1 claim and action range succeeded. This is not holder eligibility. | Verified |
+| Synthetic Judge flow | Public `/demo` valid, tampered, and two independent replay walkthroughs passed. | Verified |
+| Fresh browser proof from an eligible live note | No new real-note proof was generated or submitted on this release. | Unverified |
+| Full cold-scan latency | No full scan benchmark was run for this release. | Unmeasured |
+
+The local Judge also passed a fresh-clone Docker build and its fixture acceptance. The deployed-source and local-clone results establish the three-surface wiring and fixture behavior; they do not close the fresh live-proof gate.

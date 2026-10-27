@@ -4,14 +4,41 @@ Horoi has the five MVP Next.js routes plus the authorized ZECATHON `/demo` walkt
 
 ```mermaid
 flowchart LR
-  Holder[Browser] -->|HTTP :3000| Next[Next.js frontend]
-  Next -->|/api proxy to backend:8787| API[Bun/Hono API]
-  Holder -->|local key, scan, witness, proof in non-demo mode| WASM[Rust WASM]
-  API --> DB[(SQLite claims and consumed alternate nullifiers)]
-  API --> Verifier[Native Rust verifier]
-  API -. optional non-demo path .-> RPC[QEDIT Zebra JSON-RPC]
-  Verifier --> Core[Rust ClaimVerifier]
+  Holder[Browser] -->|local key, scan, witness, proof| WASM[Rust WASM]
+  subgraph Public[Public deployment]
+    PublicWeb[frontend-public]
+    LiveAPI[backend-live API]
+    LiveVerifier[backend-live native verifier process]
+    LiveDB[(live SQLite)]
+    DemoAPI[backend-demo API]
+    DemoVerifier[backend-demo native verifier process]
+    DemoDB[(demo SQLite)]
+    RPC[QEDIT Zebra JSON-RPC]
+    Holder -->|HTTPS| PublicWeb
+    PublicWeb -->|ordinary /api routes| LiveAPI
+    PublicWeb -->|/api/v1/demo/*| DemoAPI
+    LiveAPI --> LiveVerifier
+    LiveAPI --> LiveDB
+    LiveAPI --> RPC
+    DemoAPI --> DemoVerifier
+    DemoAPI --> DemoDB
+  end
+  subgraph Judge[Local Judge]
+    JudgeWeb[frontend :3000]
+    JudgeAPI[private backend API]
+    JudgeVerifier[Judge native verifier process]
+    JudgeDB[(Judge SQLite)]
+    Holder -->|HTTP localhost:3000| JudgeWeb
+    JudgeWeb --> JudgeAPI
+    JudgeAPI --> JudgeVerifier
+    JudgeAPI --> JudgeDB
+  end
+  Core[Rust claim library source] -. compiled into .-> LiveVerifier
+  Core -. compiled into .-> DemoVerifier
+  Core -. compiled into .-> JudgeVerifier
 ```
+
+The three native verifier boxes are separate processes; the shared Rust claim library is reused at build time. Browser-local WASM proving remains in the holder's browser.
 
 ## Docker execution modes and trust boundaries
 
