@@ -174,15 +174,29 @@ The test images were tagged `horoi/horoi-backend:unknown` and `horoi/horoi-front
 | --- | --- | --- |
 | A. Repository shape | VERIFIED | The project remains limited to `backend/`, `frontend/`, and `docs/` plus root configuration. Phase 2 Worker work remains on its separate preserved branch. |
 | B. ZSA network | RECORDED | Historical public QEDIT testnet identity and snapshot evidence is preserved above. The Docker fixture is explicitly local synthetic regtest data. |
-| C. Immutable claim | VERIFIED | The fixture statement binds network/protocol, ZIP 227 AssetId, threshold, snapshot roots, and claim domain; the selected statement is rendered in the browser. |
-| D. Privacy | VERIFIED LOCALLY | Judge frontend/API responses and runtime logs contain only public statement/proof results; the fixture and image contain no private witness, spending key, exact note value, or wallet identity. Historical public-testnet request inspection is recorded separately. |
-| E. Proof | RECORDED | One-note public-testnet proof acceptance is historical evidence. The judge proof is a distinct public synthetic fixture; no aggregate or multi-note scope is claimed. |
-| F. Verification | VERIFIED LOCALLY | The native Rust verifier accepted the genuine fixture and rejected a one-byte mutation. Historical public-testnet stateless acceptance/tamper results remain separately recorded. |
-| G. Replay | VERIFIED LOCALLY / RECORDED PUBLIC | The repeatable Docker walkthrough exercises actual SQLite uniqueness per request. Historical public testnet accepted a submission then returned HTTP 409 on duplicate. |
-| H. Domain separation | RECORDED | The historical public E2E recorded distinct alternate nullifiers for one note under different claim domains. Not newly exercised by the local synthetic fixture. |
-| I. Browser flow | PARTIAL | Local Docker `/demo` was browser-rendered and all MVP routes returned HTTP 200. No public HTTPS browser acceptance exists because no safe Horoi Caddy route is active. |
+| C. Immutable claim | VERIFIED | The fixture statement binds network/protocol, ZIP 227 AssetId, threshold, snapshot roots, and claim domain; the selected statement is rendered in the public browser. |
+| D. Privacy | VERIFIED LOCALLY | The hosted fixture API receives only scenario or fixture ID inputs and returns public statement/result data; runtime image and log scans are recorded above. Historical public-testnet request inspection remains separate. |
+| E. Proof | RECORDED | One-note public-testnet proof acceptance is historical evidence. The hosted judge proof is a distinct public synthetic fixture; no aggregate or multi-note scope is claimed. |
+| F. Verification | VERIFIED | The deployed native Rust verifier accepted the genuine fixture and rejected a one-byte mutation with `INVALID_PROOF`. Historical public-testnet verification remains separately recorded. |
+| G. Replay | VERIFIED | The public walkthrough verifies the proof twice against a fresh request-local SQLite database; first acceptance and `NULLIFIER_USED` rejection were observed on repeated external requests. Historical public-testnet duplicate submission returned HTTP 409. |
+| H. Domain separation | RECORDED | The historical public E2E recorded distinct alternate nullifiers for one note under different claim domains. Not newly exercised by the synthetic fixture. |
+| I. Browser flow | PARTIAL | The public HTTPS browser currently exercises `/demo`, API routing, genuine fixture verification, tamper rejection, and replay. Browser-local proving with a real public-testnet note is historical evidence, not newly generated during this deployment check. |
 | J. Build and checks | VERIFIED | Rust, Bun backend, frontend, Compose config, and no-cache x86_64 production image build passed; exact commands are in this report and `docs/TESTING.md`. |
-| K. Documentation | VERIFIED | Judge fixture provenance, Docker/public trust boundaries, API behavior, rate limits, and the public HTTPS deployment limitation are documented. |
+| K. Documentation | VERIFIED | Judge fixture provenance, Docker/public trust boundaries, API behavior, rate limits, verified HTTPS deployment, and historical E2E evidence are documented separately. |
 | L. Claim accuracy | VERIFIED | Historical public-testnet proof, local synthetic fixture verification, and unsupported capabilities are distinguished; no local fixture is described as public QEDIT E2E. |
 
-The public HTTPS requirement remains unfulfilled: the existing Caddy instance has `admin off` and a Caddyfile baked into the UNMET image, so an additive route cannot be reloaded without recreating that unrelated production container. No DNS record or public Horoi URL was created.
+## Separate public Docker deployment acceptance (2026-10-27)
+
+This is current deployment evidence for the Docker Judge Demo fixture. It is not a new public QEDIT testnet E2E and does not alter the historical record above.
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| DNS and HTTPS | PASS | `horoi.kima.my.id` resolves to `43.156.68.254`. From an external Windows client, `/` and `/demo` returned HTTP 200 with TLS verification result 0; an unauthenticated browser loaded the public demo. |
+| Caddy persistence and route | PASS | `unmet-web-1` now mounts the active Caddyfile read-only from `/opt/horoi-caddy-d6cc100/Caddyfile` (SHA-256 `f454b12506d1d5cfe2bd84772d067333e83f061d47fa526d1e7e7784af3e1c9d`) and reaches `frontend-public:3000` over `horoi-public_edge`. Existing UNMET Caddy site blocks were preserved. |
+| UNMET protection | PASS | Only `unmet-web-1` was recreated. The UNMET API container ID, image, environment, health, and payment/Caddy volume names and mountpoints stayed unchanged. After cutover, `/`, `/health`, `/ready`, `/live`, and `/v1/demands` returned HTTP 200. |
+| Public API and routes | PASS | `/api/v1/health`, `/api/v1/demo/fixture`, `/api/v1/claims`, and fixture claim details returned HTTP 200 over trusted HTTPS. Backend `8787/tcp` has no host binding; frontend is bound only to `127.0.0.1:3001`. |
+| Genuine and tampered HCP1 | PASS | Public browser Scenario A displayed `HTTP 200 · valid: true · horoi-verifier`. Scenario B displayed `HTTP 200 · valid: false · horoi-verifier returned INVALID_PROOF`. |
+| Repeatable replay | PASS | Public browser Scenario C accepted the first genuine proof, rejected its repeated note-level alternate nullifier with `NULLIFIER_USED`, and produced the same result again on a separate run using isolated per-run SQLite state. |
+| Release identity | PASS | Public backend/frontend labels identify source `d6cc100968aa9975930d71213439d2b3c9c5dd01`. Backend image digest is `sha256:d7b76c5b7d1c18760b7df4e1a3623532cb3f7069e3365165505267e56b6dde5e`; frontend digest is `sha256:7c0f5ad19d334402bd2e76dfa2173b5026bf54a4ae5c8356a869ac27dd6fde25`. |
+
+The public working demo requirement is now met by the verified Docker URL [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo). The historical public QEDIT testnet proof remains distinct from the deployed synthetic fixture walkthrough.

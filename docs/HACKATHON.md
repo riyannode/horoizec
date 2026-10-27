@@ -14,11 +14,12 @@ Horoi combines ZIP 227 AssetId binding, a fixed Orchard snapshot, public standar
 
 ## Demo and evidence
 
-The canonical judge walkthrough is [http://localhost:3000/demo](http://localhost:3000/demo), started from a fresh clone with `docker compose up --build`. It is zero-credential and uses the actual Horoi Rust/HCP1 verifier for valid, tampered, and SQLite replay scenarios. Its fixture is labeled **LOCAL SYNTHETIC TEST FIXTURE** and is not a public QEDIT testnet proof. See [DEMO.md](DEMO.md) for exact commands and limits. The separate VPS Compose profile is configured to bind only `127.0.0.1:3001`; that loopback address is not a public demo URL. The existing UNMET Caddy container has `admin off` and a Caddyfile baked into its image, so adding a hostname would require recreating an unrelated production container. The candidate `horoi.unmetxyz.my.id` has no DNS record, and no public HTTPS Horoi route or external browser acceptance exists. The VPS Docker and DNS findings are recorded in [DEPLOYMENT.md](DEPLOYMENT.md).
+The canonical zero-credential judge walkthrough is [http://localhost:3000/demo](http://localhost:3000/demo), started from a fresh clone with `docker compose up --build`. It uses the actual Horoi Rust/HCP1 verifier for valid, tampered, and SQLite replay scenarios. Its fixture is labeled **LOCAL SYNTHETIC TEST FIXTURE** and is not a public QEDIT testnet proof. See [DEMO.md](DEMO.md) for exact commands and limits.
 
+The public Docker demo is live at [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo). External HTTPS and browser acceptance on 2026-10-27 confirmed the page, proxied API, genuine fixture verification, tamper rejection, and repeatable isolated-SQLite replay. It runs the same pinned synthetic fixture; it is not a live-chain proof or a new browser wallet proving session. See [DEPLOYMENT.md](DEPLOYMENT.md) for the source revision, image digests, Caddy route, and UNMET preservation checks.
 The recorded public-testnet demo used one genuine eligible note at QEDIT ZSA snapshot 7596. The browser generated an HCP1 proof, the API accepted it, stateless verification returned `valid: true`, identical replay returned HTTP 409 `NULLIFIER_USED`, and a one-bit mutation returned `valid: false`. The submit request was inspected for private-data leakage. See [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md) for the full record; the run is historical and its exact runtime checkout SHA was not captured.
 
-For public HTTPS, use the Docker public profile documented in [DEPLOYMENT.md](DEPLOYMENT.md) and attach the hostname only after HTTPS, unauthenticated access, health, and API routing are verified. For any live browser proving demo, use only an already eligible, authorized testnet note after checking the active QEDIT testnet identity and snapshot. Do not issue, transfer, burn, or fund assets to reproduce the demo. If no eligible public note is available, present the recorded evidence and label it as historical. Never present a local fixture as a public-testnet result.
+For live browser proving, use only an already eligible, authorized testnet note after checking the active QEDIT testnet identity and snapshot. Do not issue, transfer, burn, or fund assets to reproduce the demo. If no eligible public note is available, present the recorded evidence and label it as historical. Never present a local fixture as a public-testnet result.
 
 The `u64::MAX` insufficient-balance test returned `NoEligibleNote` for the same test-wallet note data. It is a negative threshold test, not a second holder named Bob. The Alice/Bob example in PRD §27 is illustrative only; no two-holder public-testnet demo has been demonstrated. The separate 2026-10-22 local-regtest run is fixture evidence, not public-testnet evidence.
 
@@ -37,12 +38,12 @@ Statuses follow the evidence recorded for this release; historical public-testne
 | F. Verification and tamper rejection | `PASS_CURRENTLY_VERIFIED` | The release Rust verifier accepted the valid HCP1 fixture and rejected tampered proof, changed AssetId, and changed snapshot inputs with `INVALID_PROOF`. |
 | G. Note-level replay protection | `PASS_CURRENTLY_VERIFIED` | The release replay walkthrough repeatedly accepted then rejected the same proof using the production SQLite migration and unique constraint in isolated per-run SQLite state. Persistent SQLite state was unchanged. |
 | H. Claim-domain separation | `PASS_CURRENTLY_VERIFIED` | Locked Rust tests cover claim-domain and alternate-nullifier domain separation; Rust checks and tests pass for the release source. |
-| I. Complete browser E2E | `PASS_HISTORICAL_EVIDENCE_ONLY` | The historical public-testnet browser flow is documented. The current release browser exercised `/demo`; no public HTTPS browser run is possible while the VPS route remains loopback-only. |
+| I. Complete browser E2E | `PASS_HISTORICAL_EVIDENCE_ONLY` | The public HTTPS browser currently exercises the deployed fixture, tamper, and isolated replay scenarios. Browser-local proving against a real eligible public-testnet note is the separately documented historical result; no new wallet proof was generated by the hosted fixture demo. |
 | J. Rust/backend/frontend/Docker build | `PASS_CURRENTLY_VERIFIED` | Locked Rust, Bun backend, Next.js checks, clean public-clone Docker build, production startup, health checks, and judge scenarios pass on the release source. |
 | K. Documentation consistency | `PASS_CURRENTLY_VERIFIED` | Setup, API, architecture, security, Docker, hackathon, and historical E2E documents describe the current implementation and provenance separately. |
 | L. Testnet and product limitations disclosed | `PASS_CURRENTLY_VERIFIED` | Documentation labels the synthetic fixture, experimental/unaudited status, one-note scope, note-level replay, and lack of a demonstrated public-testnet Alice/Bob pair. |
 
-The public HTTPS demo requirement remains separate from this matrix: the deployed Docker stack is healthy on VPS loopback only, and there is no public Horoi URL or external-browser acceptance yet.
+The public HTTPS demo is currently available at [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo); this hosted synthetic-fixture acceptance does not replace or extend the historical public QEDIT testnet proof record.
 
 ## Limitations
 
@@ -82,7 +83,7 @@ An unpublished 114-second narrated video is prepared from captured `/demo` UI sc
 - **Project name:** Horoi
 - **Track:** Core & Tooling
 - **Repository:** https://github.com/riyannode/horoizec (public; unauthenticated clone verified on 2026-10-27)
-- **Working demo URL:** No public HTTPS URL is available; VPS Docker profile binds loopback-only at 127.0.0.1:3001 while the shared UNMET Caddy route remains unchanged.
+- **Working demo URL:** https://horoi.kima.my.id/demo (public HTTPS, unauthenticated Docker deployment; synthetic local fixture).
 - **Video URL:** Pending recording and separately authorized publication.
 - **Registered account:** @hpelong377
 - **Telegram contact:** @riyanhcr

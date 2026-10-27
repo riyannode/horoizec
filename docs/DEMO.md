@@ -8,7 +8,7 @@ cd horoizec
 docker compose up --build
 ```
 
-Open [http://localhost:3000/demo](http://localhost:3000/demo). Docker Engine and Compose v2 are the only runtime prerequisites. Build stages use pinned Rust/Bun versions and the checked-in Cargo/Bun lockfiles. No `.env`, QEDIT RPC, wallet, payment, public-chain scan, migration command, or blockchain transaction is needed.
+Open [http://localhost:3000/demo](http://localhost:3000/demo). The same Docker release is also available at [https://horoi.kima.my.id/demo](https://horoi.kima.my.id/demo) without login; its fixture remains synthetic and local-provenance. Docker Engine and Compose v2 are the only runtime prerequisites. Build stages use pinned Rust/Bun versions and the checked-in Cargo/Bun lockfiles. No `.env`, QEDIT RPC, wallet, payment, public-chain scan, migration command, or blockchain transaction is needed.
 
 ## What the page verifies
 
