@@ -327,7 +327,7 @@ function publicClaimCreationJob(job: ClaimCreationJob) {
 }
 async function createClaimWithSnapshot(input: CreateClaimInput, signal: AbortSignal, requestId: string, onStage: (stage: string) => void) {
   onStage("snapshot_resolution");
-  const snapshot = await resolveSnapshot(input.snapshotHeight, signal, requestId);
+  const snapshot = await resolveSnapshot(input.snapshotHeight, signal, requestId, (height) => onStage(`snapshot_scan_through_${height}`));
   const nonce = crypto.getRandomValues(new Uint8Array(32));
   const statement = {
     networkId: config.NETWORK_ID,

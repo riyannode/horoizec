@@ -49,7 +49,7 @@ Live SQLite contains the one `zsa-testnet` integration claim and no nullifiers. 
 
 The local Judge was also built and run from a fresh GitHub clone of this source revision. `docker compose up --build` completed with two healthy containers and no `.env`, host artifacts, keys, or RPC service. Valid, tampered, and two replay walkthroughs passed. An isolated project namespace was used to preserve pre-existing local resources; project reset and SQLite persistence across backend restart were verified in isolated local projects. Full acceptance records are in the task evidence bundle; this docs update does not change deployed application code.
 
-## Current diagnostic deployment (2026-10-27)
+## Earlier diagnostic deployment (2026-10-27)
 
 The safe diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f` is deployed from the existing `feat/vercel-fullstack` branch. The backend/frontend image labels match this commit:
 
@@ -62,7 +62,17 @@ The backend change adds failure-only structured diagnostics for route stage, RPC
 
 After deployment, public `/api/v1/health`, `/create`, `/claims`, and `/demo` returned HTTP 200. The live and demo SQLite databases both passed `PRAGMA integrity_check`; live remained at one claim and zero nullifiers, and demo at one claim and one nullifier. The public synthetic demo returned valid fixture `true`, tampered fixture `false` / `INVALID_PROOF`, and replay `NULLIFIER_USED`. The five configured UNMET endpoints returned HTTP 200, the UNMET containers remained healthy, and the Caddyfile SHA-256 remained `f454b12506d1d5cfe2bd84772d067333e83f061d47fa526d1e7e7784af3e1c9d`; neither UNMET nor Caddy was recreated.
 
-One browser claim attempt at snapshot 7596 returned backend HTTP 503 after 30,002 ms. Instrumentation recorded `snapshot_scan`, `getblockhash` at block 384, then `request_closed` / `parent_abort`. Next.js 16.4.0 logged `ECONNRESET`; its deployed `experimental.proxyTimeout` was 900,000 ms. The Horoi Caddy site has no short proxy timeout. The exact owner of the upstream 30-second connection close remains unproven. No additional full scan was run after the trace; see [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
+One browser claim attempt at snapshot 7596 returned backend HTTP 503 after 30,002 ms. Instrumentation recorded `snapshot_scan`, `getblockhash` at block 384, then `request_closed` / `parent_abort`. Next.js 16.4.0 logged `ECONNRESET`; its deployed `experimental.proxyTimeout` was 900,000 ms. The Horoi Caddy site has no short proxy timeout. The exact owner of the upstream 30-second connection close remains unproven. The later async scan attempt is recorded separately below and in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
+
+## Async claim-job deployment checkpoint (2026-10-27)
+
+The PR head and deployed-source checkpoint was `ce36f60ce5f6dc761bf7b78b849952d172a2a343`. A public `GET /api/v1/health` returned HTTP 200 with `network: zsa-testnet`. The exact Docker image IDs and current container health were not independently queried during this follow-up; the SSH key available in WSL was rejected by the VPS, so the earlier `9271067` image IDs above do not identify this source.
+
+The ChatGPT in-app browser submitted one real public QEDIT claim job at snapshot 8457. `POST /api/v1/claims/jobs` returned HTTP 202 and status polling returned HTTP 200, but the job failed with `SNAPSHOT_UNAVAILABLE` before inserting a claim. It was observed terminal about 11m24s after submission. The public job status exposed only `snapshot_resolution`; the backend log with the failing RPC method, block, and failure category could not be retrieved. Bounded post-failure `getblockhash`, `getblock`, and `z_gettreestate` probes returned HTTP 200. These probes do not establish a successful full scan.
+
+The working-tree follow-up adds bounded, process-memory checkpoints for complete 16-block scan ranges, with canonical end-hash validation, per-job range progress, and unchanged final snapshot/reorg checks. This code was not deployed at this checkpoint. Checkpoints and job state are lost on a backend restart. No source deployment, Caddy reload, or UNMET service change was performed during this follow-up.
+
+The working tree passed backend typecheck/build and 20 focused tests (149 assertions). An isolated `horoi-resume-test` Docker Judge build produced healthy backend and frontend containers; `/api/v1/health` and `/demo` returned HTTP 200, and ChatGPT's in-app browser observed valid-fixture acceptance, tamper rejection (`INVALID_PROOF`), and replay rejection (`NULLIFIER_USED`). The hosted `/demo` passed the same three synthetic scenarios in that browser. The project-specific containers, volume, and networks were removed after validation. This does not validate the checkpoint change against the public RPC and does not change the deployed source identity.
 
 ## Historical pre-correction HTTPS acceptance (2026-10-27)
 

@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { decodeIssuanceNotes, deriveExclusionRoot } from "./proof";
+import { snapshotScanCheckpoints } from "./zcash-checkpoints";
 let rpcId = 0;
 const RPC_WINDOW_MS = 15 * 60_000;
 const RPC_REQUEST_LIMIT = 80_000;
@@ -265,7 +266,15 @@ export async function getPublicActionBlocks(snapshotHeight: number, start: numbe
   return blocks;
 }
 
-async function deriveSnapshot(height: number, blockHash: string, commitmentRoot: string, controller: AbortController, trace: RpcTrace): Promise<Snapshot> {
+async function deriveSnapshot(
+  height: number,
+  blockHash: string,
+  commitmentRoot: string,
+  controller: AbortController,
+  trace: RpcTrace,
+  checkpointKey: string,
+  onProgress?: (scannedThrough: number) => void,
+): Promise<Snapshot> {
   const signal = controller.signal;
   const nullifiers: string[] = [];
   let previousHash: string | undefined;
@@ -273,6 +282,19 @@ async function deriveSnapshot(height: number, blockHash: string, commitmentRoot:
   for (let start = 1; start <= height; start += 16) {
     if (signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
     const end = Math.min(height, start + 15);
+    if (snapshotScanCheckpoints.has(checkpointKey, start, end)) {
+      const canonicalEndHash = await rpc("getblockhash", [end], signal, { ...trace, blockHeight: end });
+      if (typeof canonicalEndHash === "string") {
+        // A canonical range-end hash commits to every block hash and parent link in the range.
+        const cachedNullifiers = snapshotScanCheckpoints.get(checkpointKey, start, end, canonicalEndHash.toLowerCase());
+        if (cachedNullifiers) {
+          nullifiers.push(...cachedNullifiers);
+          previousHash = canonicalEndHash.toLowerCase();
+          onProgress?.(end);
+          continue;
+        }
+      }
+    }
     const requests = Array.from({ length: end - start + 1 }, async (_, index) => {
       const blockHeight = start + index;
       const expectedHash = await rpc("getblockhash", [blockHeight], signal, { ...trace, blockHeight });
@@ -289,6 +311,7 @@ async function deriveSnapshot(height: number, blockHash: string, commitmentRoot:
       await Promise.allSettled(requests);
       throw error;
     }
+    const batchNullifiers: string[] = [];
     for (let index = 0; index < blocks.length; index++) {
       const blockHeight = start + index;
       const { expectedHash, block } = blocks[index]!;
@@ -308,10 +331,15 @@ async function deriveSnapshot(height: number, blockHash: string, commitmentRoot:
           if (typeof action.nullifier !== "string" || !/^[0-9a-f]{64}$/i.test(action.nullifier)) {
             throw new Error("SNAPSHOT_UNAVAILABLE");
           }
-          nullifiers.push(action.nullifier.toLowerCase());
+          const nullifier = action.nullifier.toLowerCase();
+          nullifiers.push(nullifier);
+          batchNullifiers.push(nullifier);
         }
       }
     }
+    if (previousHash === undefined) throw new Error("SNAPSHOT_UNAVAILABLE");
+    snapshotScanCheckpoints.set(checkpointKey, start, end, previousHash, batchNullifiers);
+    onProgress?.(end);
   }
   if (height > 0 && previousHash !== blockHash.toLowerCase()) {
     throw new Error("SNAPSHOT_UNAVAILABLE");
@@ -322,10 +350,16 @@ async function deriveSnapshot(height: number, blockHash: string, commitmentRoot:
   trace.stage = "snapshot_reorg_check";
   const canonicalHash = await rpc("getblockhash", [height], signal, trace);
   if (canonicalHash !== blockHash) throw new Error("SNAPSHOT_UNAVAILABLE");
+  snapshotScanCheckpoints.clear(checkpointKey);
   return { commitmentRoot, exclusionRoot };
 }
 
-export async function resolveSnapshot(height: number, parentSignal?: AbortSignal, requestId?: string): Promise<{ commitmentRoot: string; exclusionRoot: string }> {
+export async function resolveSnapshot(
+  height: number,
+  parentSignal?: AbortSignal,
+  requestId?: string,
+  onScanProgress?: (scannedThrough: number) => void,
+): Promise<{ commitmentRoot: string; exclusionRoot: string }> {
   const controller = new AbortController();
   const trace: RpcTrace = { requestId, stage: "snapshot_network", snapshotHeight: height };
   const abortParent = () => controller.abort();
@@ -362,7 +396,7 @@ export async function resolveSnapshot(height: number, parentSignal?: AbortSignal
     if (activeSnapshotKey) throw new Error("SNAPSHOT_UNAVAILABLE");
 
     activeSnapshotKey = key;
-    snapshot = deriveSnapshot(height, hash, root, controller, trace)
+    snapshot = deriveSnapshot(height, hash, root, controller, trace, key, onScanProgress)
       .catch((error: unknown) => {
         if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
         throw error;

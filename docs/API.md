@@ -70,7 +70,7 @@ Errors: BAD_REQUEST, INVALID_ASSET_ID, INVALID_THRESHOLD, INVALID_SNAPSHOT, NETW
 
 Request JSON: same as `POST /claims`. Schema and native AssetId validation happen before snapshot admission.
 
-Response 202: `{ "jobId": string, "status": "running", "stage": string }`. The live backend performs the same canonical network/genesis checks, snapshot hash/root resolution, reorg checks, claim derivation, and SQLite insertion as `POST /claims`. The job has a 14-minute deadline, runs one snapshot scan at a time per backend process, and is not persisted. Job status is retained in memory for up to 30 minutes and is lost if the backend restarts.
+Response 202: `{ "jobId": string, "status": "running", "stage": string }`. The live backend performs the same canonical network/genesis checks, snapshot hash/root resolution, reorg checks, claim derivation, and SQLite insertion as `POST /claims`. The job has a 14-minute deadline, and one snapshot scan runs at a time per backend process. Its `stage` reports the last completed scan range as `snapshot_scan_through_<height>`. Completed 16-block ranges may be resumed from process-memory checkpoints only after the current canonical end hash matches; the final snapshot hash/root and reorg checks still run before a claim is inserted. Checkpoints are bounded to one snapshot, 10,000 ranges, and 200,000 nullifiers. Job status and checkpoints are not persisted and are lost on backend restart; status is retained in memory for up to 30 minutes.
 
 Errors: the same validation and network errors as `POST /claims`, plus RATE_LIMITED (429) when a scan is already active or the bounded job table is full.
 
