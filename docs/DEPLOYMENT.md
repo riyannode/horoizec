@@ -7,6 +7,8 @@ Horoi has two Docker Compose modes that use the same locked Bun/Next and Rust bu
 | Local judge | `docker compose up --build` | Frontend at `http://localhost:3000`; zero credentials and no public RPC. |
 | Public demo | `docker compose --project-name horoi-public --profile public up --build -d backend frontend-public` | Frontend bound to `127.0.0.1:3001` for an HTTPS reverse proxy. |
 
+As of 2026-10-27, the VPS `horoi-public` containers are stopped at user direction. Their project-scoped SQLite volume is preserved. No public hostname or HTTPS route is configured.
+
 The public stack is project-isolated as `horoi-public`: its private network, persistent SQLite volume, and containers are separate from `horoi-judge` and other Compose projects. Only the frontend's loopback port is published. The backend, verifier process, and database have no host ports. Both modes use the pinned public HCP1 fixture and do not connect to QEDIT RPC or perform cold snapshot creation.
 
 ## Authorized VPS procedure
