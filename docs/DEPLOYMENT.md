@@ -100,3 +100,12 @@ The Caddy container reached the frontend through `horoi-public_edge`. The backen
 External acceptance returned HTTP 200 for `/`, `/demo`, `/api/v1/health`, `/api/v1/demo/fixture`, `/api/v1/claims`, and the fixture claim details route. The public browser showed `HTTP 200 · valid: true · horoi-verifier`; the one-byte-tampered fixture returned `valid: false` and `INVALID_PROOF`. The replay walkthrough returned first-submission acceptance followed by `NULLIFIER_USED`; repeating the walkthrough produced the same result because each request uses a fresh isolated SQLite database. The page labels the fixture `LOCAL SYNTHETIC TEST FIXTURE` and explicitly distinguishes it from public QEDIT testnet evidence.
 
 The hosted Docker demo and the historical public QEDIT testnet proof run are separate evidence. The hosted fixture proves that the deployed Rust/HCP1 verifier accepts the pinned synthetic fixture and rejects the tampered proof; it does not establish a live public-chain scan, Zebra regtest execution, or a newly generated browser wallet proof. No public-chain scan or blockchain transaction runs at startup.
+
+
+## Latest continuation (2026-10-28)
+
+A single live create retry at QEDIT height 8457 succeeded and persisted claim c19b11d72b79fab77b21942e031ae52ac177550a9a19de3a3ecee0fb1a40060e with threshold 1 and canonical roots. The public app remains on deployed source ce36f60; PR source 4a08917 is not deployed.
+
+In ChatGPT's in-app browser, the claim scan fetched public 16-block action ranges through block 4016/8457, with every observed request returning HTTP 200. The test tab was closed when the user interrupted the run. No proof, submission, replay, tamper, or fresh proof-submit privacy result exists. The browser tool now reports local browser use disabled, so this attempt was not resumed. Note eligibility for the circuit is unconfirmed.
+
+A fresh public clone of 4a08917 passed the Docker Judge build and browser valid/tamper/replay scenarios. Its zebra-regtest fixture remains synthetic and separate from the live QEDIT claim. The clone's project-specific containers, volume, network, and directory were removed. No production deployment, Caddy reload, or UNMET service change was made.

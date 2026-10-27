@@ -42,15 +42,18 @@ This starts `backend-live`, `backend-demo`, and `frontend-public` under the `hor
 
 The Judge fixture and public-demo `/demo` route remain synthetic. Historical public QEDIT testnet proof acceptance is recorded separately in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md); it does not establish a new browser-generated proof or cold-scan acceptance for a later deployment.
 
-## Current release acceptance (2026-10-27)
+## Current release acceptance (2026-10-28)
 
-At the current task checkpoint, deployed source is `ce36f60ce5f6dc761bf7b78b849952d172a2a343`. The public health endpoint returned HTTP 200 with `network: zsa-testnet`; exact image IDs and live container health were not independently read in this turn. The previously recorded image IDs below belong to diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f` and must not be attributed to `ce36f60`. The root application routes to `backend-live`; `/demo` routes to the isolated synthetic backend. See [DEPLOYMENT.md](DEPLOYMENT.md) for the measured acceptance record.
+At the 2026-10-28 checkpoint, deployed source remains ce36f60ce5f6dc761bf7b78b849952d172a2a343; public health returned HTTP 200 with network zsa-testnet. Pushed PR source is 4a08917d8dc6129dcd095ff64ebb687f33be4fbf and is not deployed. Current production image IDs were not independently queried; older recorded IDs belong to 92710678a2efad1b27552e9345c41036a604ed3f. The live app routes to backend-live; /demo routes to the isolated synthetic backend. See DEPLOYMENT.md for the evidence record.
 
 | Gate | Current evidence | Status |
 | --- | --- | --- |
-| Public-chain snapshot integration | Canonical QEDIT testnet genesis and NU7 were confirmed; a block 1 claim and action range succeeded. This is not holder eligibility. | Verified |
+| Public-chain snapshot integration | One new claim at QEDIT snapshot 8457 was persisted for the minted AssetId with canonical roots. This is not holder eligibility. | Verified |
 | Synthetic Judge flow | Public `/demo` valid, tampered, and two independent replay walkthroughs passed. | Verified |
-| Fresh browser proof from an eligible live note | No new real-note proof was generated or submitted on this release. | Unverified |
-| Full cold-scan latency | The earlier diagnostic request was canceled at 30,002 ms. A later async job at snapshot 8457 failed before claim insertion with `SNAPSHOT_UNAVAILABLE` after about 11m24s. Bounded RPC probes afterward were responsive but did not identify the failing scan request. | Unresolved |
+| Fresh browser proof from an eligible live note | Browser scan reached block 4016/8457 and was interrupted before proof generation or submission. | Unverified |
+| Full cold-scan latency | Earlier request closed at 30,002 ms; first async snapshot-8457 job failed after about 11m24s. A single retry created the canonical claim, but the browser action scan was interrupted at block 4016/8457. | Unresolved |
 
 The local Judge passed `docker compose up --build` from a fresh public clone of default branch `feat/vercel-fullstack` at diagnostic source `92710678a2efad1b27552e9345c41036a604ed3f`. Both containers became healthy, the proxied health endpoint returned HTTP 200 with `zebra-regtest`, and browser valid, tamper, and replay scenarios passed. On 2026-10-27, the current working tree was also built in isolated Compose project `horoi-resume-test`; both containers became healthy, `/api/v1/health` and `/demo` returned HTTP 200, and ChatGPT's in-app browser observed `valid: true`, `INVALID_PROOF`, and `NULLIFIER_USED` on the synthetic Judge. The hosted `/demo` returned the same outcomes in that browser. The isolated Compose resources were removed after the run. These synthetic checks do not close the fresh live-proof gate.
+
+
+On 2026-10-28 a fresh public clone at 4a08917 built healthy Docker Judge containers. Health and /demo returned HTTP 200; the ChatGPT in-app browser observed valid true, INVALID_PROOF, and NULLIFIER_USED. This remains synthetic Judge evidence and does not establish QEDIT note ownership.
