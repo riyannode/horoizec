@@ -4,6 +4,20 @@ export interface Claim {
   exclusionRoot: string; claimDomain: string; creatorNonce: string; expiresAt: number | null; createdAt: number;
   status: "active" | "expired";
 }
+export interface ClaimCreationJob {
+  jobId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stage: string;
+  claim?: Claim;
+  error?: { code: string; message: string };
+}
+export interface ProofSubmissionJob {
+  jobId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  stage: string;
+  result?: { accepted: true; replayProtection: "note-level" };
+  error?: { code: string; message: string };
+}
 export interface PublicOrchardAction {
   nullifier: string;
   cmx: string;
@@ -33,8 +47,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 export async function publicActionBlocks(snapshotHeight: number, start: number, end: number): Promise<PublicActionBlock[]> {
-  const { blocks } = await api<{ blocks: PublicActionBlock[] }>(
-    `/snapshots/${snapshotHeight}/actions?start=${start}&end=${end}`,
-  );
-  return blocks;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const { blocks } = await api<{ blocks: PublicActionBlock[] }>(
+        `/snapshots/${snapshotHeight}/actions?start=${start}&end=${end}`,
+      );
+      return blocks;
+    } catch (error) {
+      if (!(error instanceof TypeError || error instanceof SyntaxError) || attempt === 7) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * Math.min(2 ** attempt, 8)));
+    }
+  }
+  throw new Error("The public chain data request failed.");
 }

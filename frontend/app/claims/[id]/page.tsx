@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { api, publicActionBlocks, type Claim } from "../../../lib/api";
+import { api, publicActionBlocks, type Claim, type ProofSubmissionJob } from "../../../lib/api";
+const dockerJudge = process.env.NEXT_PUBLIC_HOROI_DEMO_MODE === "true";
 
 function bytes32(value: string, field: string): Uint8Array {
   if (!/^(?:[0-9a-fA-F]{2}){32}$/.test(value)) throw new Error(`${field} must be 32-byte hexadecimal.`);
@@ -92,6 +93,7 @@ export default function ClaimDetails() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState("");
   const [progress, setProgress] = useState("");
+  const [proofJobId, setProofJobId] = useState("");
   const spendingKeyInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -141,16 +143,43 @@ export default function ClaimDetails() {
       );
       setProgress("Submitting proof…");
       const alternateNullifier = claimWasm.claim_proof_alternate_nullifier(proof);
-      await api(`/claims/${encodeURIComponent(claim.id)}/submit`, {
+      const path = `/claims/${encodeURIComponent(claim.id)}/submit/jobs`;
+      const proofInput = {
+        claimId: claim.id,
+        protocolVersion: claim.protocolVersion,
+        proof: encodeBase64(proof),
+        alternateNullifiers: [alternateNullifier],
+      };
+      const started = await api<ProofSubmissionJob>(path, {
         method: "POST",
-        body: JSON.stringify({ claimId: claim.id, protocolVersion: claim.protocolVersion, proof: encodeBase64(proof), alternateNullifiers: [alternateNullifier] }),
+        body: JSON.stringify(proofInput),
       });
+      setProofJobId(started.jobId);
+      let job = started;
+      while (job.status === "running") {
+        setProgress(`Verifying proof and snapshot… ${job.stage}`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        job = await api<ProofSubmissionJob>(`${path}/${encodeURIComponent(started.jobId)}`);
+      }
+      if (job.status === "failed") throw new Error(`${job.error?.code ?? "PROOF_SUBMISSION_FAILED"}: ${job.error?.message ?? "Proof submission failed."}`);
+      if (job.status === "cancelled") throw new Error("Proof submission was cancelled.");
       setResult("Claim accepted with note-level replay protection.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      if (spendingKeyInput.current) spendingKeyInput.current.value = "";
       setBusy(false);
       setProgress("");
+      setProofJobId("");
+    }
+  }
+
+  async function cancelProofSubmission() {
+    if (!claim || !proofJobId) return;
+    try {
+      await api<ProofSubmissionJob>(`/claims/${encodeURIComponent(claim.id)}/submit/jobs/${encodeURIComponent(proofJobId)}/cancel`, { method: "POST" });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     }
   }
 
@@ -172,15 +201,22 @@ export default function ClaimDetails() {
             <div><dt>Exclusion root</dt><dd>{claim.exclusionRoot}</dd></div>
             <div><dt>Expires</dt><dd>{claim.expiresAt === null ? "Never" : new Date(claim.expiresAt * 1000).toISOString()}</dd></div>
           </dl>
-          <p className="notice">Experimental, unaudited. This proof currently supports one normal note. The spending key, note scanning, and witness construction stay in this browser; only public chain data is downloaded and only the proof and alternate nullifier are submitted.</p>
           <div className="actions">
             <Link className="button" href="/verify">Verify a proof bundle</Link>
           </div>
-          <form className="proof-form" onSubmit={proveAndSubmit}>
-            <label>Testnet spending key (32-byte hex)<input ref={spendingKeyInput} type="password" autoComplete="off" required pattern="(?:[0-9a-fA-F]{2}){32}" /></label>
-            <p className="notice">Use a testnet-only key. It is processed locally and never sent to the backend. Do not use a mainnet key.</p>
-            <button className="button primary" disabled={busy}>{busy ? "Scanning and proving…" : "Scan locally and submit proof"}</button>
-          </form>
+          {dockerJudge ? (
+            <p className="notice">This Docker fixture is not a live chain snapshot and has no browser proof-generation inputs. Run the separate server-side fixture verification scenarios on <Link href="/demo">the demo page</Link>.</p>
+          ) : (
+            <>
+              <p className="notice">Experimental, unaudited. This proof currently supports one normal note. A cold scan downloads public actions in 16-block ranges and may take a long time. The spending key, note scanning, and witness construction stay in this browser; only public chain data is downloaded and the proof with public claim fields is submitted.</p>
+              <form className="proof-form" onSubmit={proveAndSubmit}>
+                <label>Testnet spending key (32-byte hex)<input ref={spendingKeyInput} type="password" autoComplete="off" required pattern="(?:[0-9a-fA-F]{2}){32}" /></label>
+                <p className="notice">Use a testnet-only key. It is processed locally and never sent to the backend. Do not use a mainnet key.</p>
+                <button className="button primary" disabled={busy}>{busy ? "Working…" : "Scan locally and submit proof"}</button>
+                {busy && <button className="button" type="button" disabled={!proofJobId} onClick={cancelProofSubmission}>Cancel proof verification</button>}
+              </form>
+            </>
+          )}
           {progress && <p role="status">{progress}</p>}
           {error && <p className="error" role="alert">{error}</p>}
           {result && <p className="success" role="status">{result}</p>}

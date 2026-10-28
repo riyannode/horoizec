@@ -1,5 +1,19 @@
 # Setup and dependency proof
 
+## Docker Judge Quickstart
+
+Requirements: Linux-capable Docker Engine and Docker Compose v2. From a fresh checkout:
+
+```bash
+git clone https://github.com/riyannode/horoizec.git
+cd horoizec
+docker compose up --build
+```
+
+Then open [http://localhost:3000/demo](http://localhost:3000/demo). This is the zero-credential judge mode: no `.env`, wallet, QEDIT RPC, public scan, payment, or transaction. The build uses pinned Rust 1.99.1 and Bun 1.4.3 base images plus `Cargo.lock` and each Bun lockfile. It builds the native verifier and Next.js production server from source; it does not use prebuilt WSL artifacts. Docker's x86_64/Linux build path was exercised in this task; arm64 is not yet acceptance-tested.
+
+The first startup derives and verifies the pinned HCP1 fixture with Rust before Judge backend health is declared. SQLite persists in the `horoi-judge_horoi_data` volume. To reset only the Judge project and its replay state, use `docker compose down -v --remove-orphans`. See [DEMO.md](DEMO.md) for scenario and provenance details, and [THREE_SURFACES.md](THREE_SURFACES.md) plus [DEPLOYMENT.md](DEPLOYMENT.md) for public live/demo configuration.
+
 ## Environment
 
 Implementation and source validation ran in WSL2 on Ubuntu 24.04. The repository is /home/acer/projects/horoi.
@@ -61,7 +75,7 @@ The following were successfully completed from Linux source checkouts:
 
 The task-owned regtest process was stopped after the proof. The transaction and wallet state were local and ephemeral. This does not establish a public testnet or mainnet ZSA integration.
 
-Build prerequisites missing from the base WSL image were extracted into /tmp for those checks. The successful commands depended on that task-local environment setup and are not yet a project build recipe.
+For a clean setup, use the pinned tool versions and commands in this section. The repository includes independent `backend/bun.lock` and `frontend/bun.lock` files plus `backend/rust/Cargo.lock`; install Bun dependencies with `bun install --frozen-lockfile` from each application directory. The recorded Rust/WASM build used Rust 1.99.1, the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, and Clang 18. The checks and builds passed in the existing WSL2 Ubuntu 24.04 environment with those tools available. A fresh base-image provisioning run was not independently performed; the earlier QEDIT transaction-tool checks used task-local extracted packages under `/tmp`.
 
 ## Claim-circuit implementation boundary
 
@@ -89,12 +103,12 @@ The Orchard package used by Horoi is a local copy of QED-it/orchard revision cf8
 
 ## Current implementation and environment boundary
 
-The backend and frontend are under `backend/` and `frontend/`, with independent Bun lockfiles. Copy `backend/.env.example` to `backend/.env` for the local QEDIT Zebra regtest. Supported variables are `HOST`, `PORT`, `NETWORK_ID` (`zebra-regtest` or `zsa-testnet`), `ZCASH_RPC_URL`, optional `ZCASH_RPC_USER` and `ZCASH_RPC_PASSWORD`, `DATABASE_PATH`, and `VERIFIER_PATH`. Defaults bind the API to 127.0.0.1:8787 and RPC to 127.0.0.1:18232; do not point this prototype at mainnet. The backend requires NU7 status active before ZSA routes proceed. Zebra reports BIP70 `chain: "test"` for both testnet and regtest, so Horoi identifies the pinned regtest by its genesis hash (`029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327`) instead of trusting that ambiguous chain label.
+The backend and frontend are under `backend/` and `frontend/`, with independent Bun lockfiles. Copy `backend/.env.example` to `backend/.env` for the local QEDIT Zebra regtest. Supported variables are `HOST`, `PORT`, `NETWORK_ID` (`zebra-regtest` or `zsa-testnet`), `ZCASH_RPC_URL`, optional `ZCASH_RPC_USER` and `ZCASH_RPC_PASSWORD`, `DATABASE_PATH`, and `VERIFIER_PATH`. Defaults bind the API to 127.0.0.1:8787 and RPC to 127.0.0.1:18232; do not point this prototype at mainnet. The backend requires NU7 status active before ZSA routes proceed. Zebra reports BIP70 `chain: "test"` for both testnet and regtest, so Horoi checks the genesis hash for each configured network: QEDIT regtest (`029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327`) and the QEDIT public ZSA testnet endpoint (`rpc.test-zsa.org`, `f41f61ddf9610ae40f519ad2e9e543e065ef0357eeecf5a4cc08a765d9505756`, observed 2026-10-24). A testnet reset or endpoint change fails closed until its ZSA identity is reverified and the expected genesis hash is updated.
 
 Start the API in WSL from `backend/` with `bun run start`, and the UI from `frontend/` with `bun run dev`. The UI is available at http://127.0.0.1:3000. The API defaults to http://127.0.0.1:8787.
 
 The QEDIT testnet `z_gettreestate` response exposes the Orchard commitment root, not a precomputed standard-nullifier exclusion root. Horoi derives the latter by reading canonical block hashes and verbosity-2 block transactions from height 1 through the selected snapshot, collecting public Orchard action nullifiers, and building the deterministic complement tree in the Rust verifier. The browser feed uses decoded Orchard actions plus public issuance-note fields parsed from each transaction's raw hex; it preserves transaction order so the browser can reconstruct the same commitment tree. It checks block heights, block hashes, parent links, and the selected block hash again before returning the snapshot. The scan cache is process-local; a restarted backend rebuilds it. Public nullifiers are sent only to the local verifier process, and no note or private nullifier is sent for witness retrieval.
 
-The updated Rust circuit binds its computed standard nullifier to a gap witness and public exclusion root. On 2026-10-22, the local browser scanner reconstructed an issued note from public transaction fields, generated a proof in WASM, and received acceptance from the local verifier. Replaying the accepted proof returned HTTP 409; the public verifier returned VALID for the original bundle and INVALID for a modified proof. This confirms the experimental flow on the pinned local regtest fixture only. Public testnet eligibility remains unverified. The height-100 snapshot scan was exercised against the public QEDIT endpoint; a prior full-height scan ended on an RPC connection reset.
+The updated Rust circuit binds its computed standard nullifier to a gap witness and public exclusion root. On 2026-10-22, the local browser scanner reconstructed an issued note from public transaction fields, generated a proof in WASM, and received acceptance from the local verifier. On 2026-10-25, ChatGPT Browser generated a real HCP1 proof from a genuine note in public QEDIT ZSA testnet snapshot 7596 and Horoi accepted it. Stateless verification returned `valid: true`, identical replay returned HTTP 409 `NULLIFIER_USED`, and a tampered proof returned `valid: false`. Browser Network inspection confirmed private wallet and witness data stayed client-side. The separate local-regtest result remains fixture evidence only; the public-testnet evidence and scan measurements are documented in [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md).
 
 For a fresh install, run `bun install --frozen-lockfile` from both `backend/` and `frontend/`. Build the Rust verifier with `cargo +1.99.1 build --locked --release --bin horoi-verifier`; start the API with `bun run start` from `backend/` and the UI with `bun run dev` from `frontend/`. Configure the frontend API path through the same-origin Next.js proxy; no API secret is exposed to the browser.

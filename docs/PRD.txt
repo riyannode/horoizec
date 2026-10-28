@@ -209,18 +209,9 @@ Problem statement:
 
 Core demo:
 
-    TEST ASSET
-      Alice: 250 units
-      Bob:    50 units
-
-    Claim:
-      "Prove >= 100 units at snapshot H"
-
-    Alice:
-      VALID
-
-    Bob:
-      INVALID
+    The Alice/Bob threshold example is conceptual only, not an existing
+    two-holder E2E result. The recorded public-testnet demo uses one genuine
+    eligible note and verifies a one-note threshold claim at snapshot 7596.
 
     Public observer learns:
       asset
@@ -312,8 +303,8 @@ Browser:
     - loads local prover WASM;
     - obtains public ZSA chain data;
     - scans/decrypts the holder's local testnet ZSA state;
-    - selects eligible notes;
-    - builds witnesses;
+    - selects one eligible normal note;
+    - builds its witness locally;
     - creates alternate nullifiers;
     - creates proof locally.
 
@@ -331,17 +322,19 @@ Response:
 
 5.4 Submit Claim
 
-A holder submits proof + public inputs + alternate nullifiers.
+A holder submits the HCP1 proof bundle and its public alternate-nullifier
+encoding. HCP1 carries the nine circuit public fields; the API binds them to the
+stored claim instead of accepting a separate publicInputs object.
 
 Backend performs an atomic flow:
 
     1. load claim;
     2. reject expired claim;
-    3. compare all public inputs with stored claim metadata;
+    3. parse HCP1 public fields and bind them to stored claim metadata;
     4. cryptographically verify proof;
-    5. check alternate nullifiers;
-    6. reject reused nullifier;
-    7. store accepted nullifiers;
+    5. compare the submitted alternate nullifier with the verified proof output;
+    6. reject a reused nullifier;
+    7. store the accepted nullifier;
     8. return accepted result.
 
 ======================================================================
@@ -406,9 +399,7 @@ Every claim contains:
 
 A holder's witness may contain:
 
-    note data
-    note values
-    note randomness
+    one normal note's data, value, and randomness
     spend-authority material required by the proof construction
     commitment paths
     nullifier non-membership witnesses
@@ -420,22 +411,22 @@ These values must never be sent to Horoi backend.
 
 The prover must establish that:
 
-    - each contributing note belongs to assetId;
-    - each note existed at snapshotHeight;
-    - each note was unspent at snapshotHeight;
+    - the note belongs to assetId;
+    - the note existed at snapshotHeight;
+    - the note was unspent at snapshotHeight;
     - the prover has the required authority;
-    - the aggregate value of selected notes is >= threshold;
-    - each note maps to an alternate nullifier under claimDomain.
+    - the note value is >= threshold;
+    - the note maps to an alternate nullifier under claimDomain.
 
 7.4 Exact balance
 
-Exact aggregate balance must remain private.
+Exact note value must remain private.
 
 Only threshold satisfaction is public.
 
 7.5 Asset binding
 
-The circuit/proof MUST bind contributing notes to the public AssetId.
+The circuit/proof MUST bind the note to the public AssetId.
 
 A proof for Asset A cannot be accepted for Asset B.
 
@@ -468,7 +459,8 @@ Initial target:
 
     MAX_NOTES = 4
 
-This is a practical bound for the hackathon.
+Current implementation supports one normal note only. Four-note aggregation is
+an unimplemented target, not a current MVP capability.
 
 If profiling shows the proof is too slow, reduce the bound and document it.
 
@@ -696,6 +688,9 @@ frontend/
 docs/
     PRD.txt
     ARCHITECTURE.md
+
+Root-level Docker Compose and Dockerfile configuration are allowed; do not add
+a fourth top-level project directory.
     API.md
     CRYPTO.md
     ERRORS.md
@@ -704,6 +699,8 @@ docs/
     TESTING.md
     HACKATHON.md
     REFERENCES.md
+    DEMO.md (concise Docker judge instructions)
+    DEPLOYMENT.md (separate public Docker profile)
 
 10.1 File-count rule
 
@@ -943,9 +940,10 @@ Optional query:
 
     limit
     cursor
-    status
+    status = active | expired
 
-Keep pagination simple.
+Status is computed from expiry at query time. Apply status filtering before
+descending-ID cursor pagination. Unsupported status values return BAD_REQUEST.
 
 14.3 GET /claims/:id
 
@@ -974,6 +972,16 @@ Backend:
       -> call Rust canonical claim builder
       -> persist immutable claim
 
+Browser transport addition (2026-10-27): the create form starts `POST
+/claims/jobs`, polls `GET /claims/jobs/:jobId`, and may cancel with `POST
+/claims/jobs/:jobId/cancel`. The bounded in-process job uses the same validation,
+canonical snapshot/root checks, claim derivation, and persistence path as
+`POST /claims`; the synchronous route remains available for clients that can
+hold the connection. A job has a 14-minute deadline, one active snapshot scan
+per backend process, and in-memory status only. Job status expires after 30
+minutes and is lost on backend restart. Client disconnect after job creation
+does not cancel the job; explicit cancellation aborts its RPC work.
+
 14.5 POST /proofs/verify
 
 Stateless proof verification.
@@ -983,19 +991,25 @@ Request:
     {
       "claimId": "...",
       "protocolVersion": 1,
-      "proof": "...base64...",
-      "publicInputs": { ... }
+      "proof": "...base64 HCP1 bundle...",
+      "alternateNullifiers": ["...one 32-byte field encoding..."]
     }
+
+HCP1 carries nine circuit public fields. The verifier reconstructs the expected
+statement from the stored claim and cryptographically verifies those embedded
+fields. The API request has no separate publicInputs object.
 
 Valid response:
 
     {
       "valid": true,
       "claimId": "...",
+      "alternateNullifier": "...",
       "statement": {
         "assetId": "...",
         "threshold": "100",
-        "snapshotHeight": 12345
+        "snapshotHeight": 12345,
+        "protocolVersion": 1
       }
     }
 
@@ -1007,17 +1021,26 @@ State-changing submission.
 
 Request:
 
-    proof
-    publicInputs
-    alternateNullifiers
+    {
+      "claimId": "...",
+      "protocolVersion": 1,
+      "proof": "...base64 HCP1 bundle...",
+      "alternateNullifiers": ["...one 32-byte field encoding..."]
+    }
+
+The path claim ID must equal claimId. HCP1 carries the nine circuit public
+fields; the verifier checks them against the stored claim statement. The API
+checks the submitted alternate nullifier against the value derived by the
+verified proof. No separate publicInputs object is sent.
 
 Atomic sequence:
 
     load claim
       -> reject expired
-      -> compare public inputs
-      -> verify proof
-      -> check nullifiers
+      -> parse HCP1 public statement and bind it to the stored claim
+      -> verify proof cryptographically
+      -> check the proof-derived alternate nullifier against the submitted value
+      -> check whether the nullifier is already consumed
       -> insert nullifiers
       -> commit
 
@@ -1028,6 +1051,23 @@ Two concurrent submissions with the same nullifier cannot both succeed.
 ======================================================================
 
 Frontend is intentionally minimal.
+
+Authorized ZECATHON exception (2026-10-27): add `/demo` as a focused Docker
+judge walkthrough. It may exercise only the pinned local HCP1 fixture through
+the native Rust verifier and SQLite replay path. It must label fixture
+provenance, must not imply public-testnet evidence or browser-local proof
+generation, and must add no other product route. The original five routes
+remain the MVP route set.
+
+Runtime surfaces (2026-10-27): preserve the root Compose file as the local,
+zero-credential Judge surface. The standalone public Compose file runs separate
+testnet-live and synthetic-demo backend services with separate private
+networks and project-scoped SQLite volumes. The demo backend has no egress;
+the live backend alone has RPC egress. The public frontend routes `/demo` API
+calls to the synthetic service and other API calls to the live service. Only
+the frontend is published, on loopback behind the existing HTTPS proxy. Keep
+the local Judge backend private while its frontend joins the local edge bridge.
+See `docs/THREE_SURFACES.md` for request limits and operational boundaries.
 
 Design polish happens after protocol works.
 
@@ -1160,14 +1200,16 @@ WASM artifact:
 
     frontend/public/claim.wasm
 
-frontend/lib/proof.ts must remain thin.
+The current browser scan/prove flow is in
+`frontend/app/claims/[id]/page.tsx` and calls the canonical Rust WASM module.
 
-It may:
+It passes public claim/action data and a browser-local spending key into WASM.
+WASM creates the private witness internally and returns the HCP1 proof bundle.
+The page may:
 
     load WASM
     pass public claim data
-    pass browser-local witness data
-    return proof bundle
+    pass public action data and local spending-key bytes to WASM
     map known WASM errors to UI messages
 
 It must NOT:
@@ -1177,8 +1219,9 @@ It must NOT:
     derive AssetIds independently
     upload private wallet state
 
-For hackathon demo, a browser-local TESTNET seed is acceptable if production
-wallet integration is not practical.
+For the hackathon demo, the page may accept the documented browser-local
+TESTNET spending-key encoding if production wallet integration is not practical.
+It does not accept or store a seed phrase.
 
 Requirements:
 
@@ -1355,6 +1398,10 @@ This project must NOT accumulate many test files.
 20.1 Automated test policy
 
 Do NOT add automated test suites for frontend or Bun API by default.
+
+The existing `backend/server.test.ts` is a narrow exception for the malformed
+JSON error regression and the status-filter pagination contract. Keep it
+focused; do not expand it into a general API suite.
 
 Forbidden by default:
 
@@ -1608,6 +1655,22 @@ Must contain:
     novelty boundary
     demo steps
     measured results
+
+21.10 docs/DEMO.md
+
+Concise Docker judge start, fixture provenance, verification scenarios, and
+state reset instructions.
+
+21.11 docs/DEPLOYMENT.md
+
+Document the local Judge, public live API, and public synthetic demo Compose
+surfaces, loopback proxy boundary, separate networks/volumes, and scoped
+deployment/reset commands.
+
+21.12 docs/THREE_SURFACES.md
+
+Document the three runtime purposes, route mapping, network isolation, and
+finite request/admission bounds. Do not claim a cold-scan throughput guarantee.
     limitations
     references
 
@@ -1814,6 +1877,9 @@ Implement only:
     /create
     /verify
 
+The authorized `/demo` judge route is the limited exception documented in
+Section 15; do not add other product routes.
+
 Keep visual design minimal.
 
 PHASE 5 — CHATGPT BROWSER VALIDATION
@@ -1836,6 +1902,8 @@ Complete:
     SETUP.md
     TESTING.md
     HACKATHON.md
+    DEMO.md
+    DEPLOYMENT.md
     REFERENCES.md
 
 Record actual measured proof time and proof size.
@@ -1891,6 +1959,7 @@ J. Build
     frontend builds
     backend typechecks/builds
     Rust checks/tests pass
+    root Docker Compose judge build and acceptance pass
 
 K. Documentation
 
@@ -1903,6 +1972,27 @@ L. Honesty
       experimental
       unaudited
       note-level replay protection
+      one-note limitation and no demonstrated public-testnet Alice/Bob pair
+      synthetic Docker fixture is not public-testnet evidence
+
+Verification status snapshot (2026-10-28; evidence details are in
+PUBLIC_ZSA_E2E_REPORT.md). These statuses record evidence and do not change
+the acceptance requirements above.
+
+| Criterion | Status | Evidence boundary |
+| --- | --- | --- |
+| A. Repository | `PASS_CURRENTLY_VERIFIED` | Required `backend/`, `frontend/`, and `docs/` structure is present. |
+| B. ZSA | `PARTIAL` | Public QEDIT test genesis, NU7, and Zebra/protocol compatibility were checked; exact running upstream source revision remains unknown. |
+| C. Claim | `PASS_CURRENTLY_VERIFIED` | Live claim at snapshot 8457 binds the minted AssetId, threshold 1, and canonical roots. |
+| D. Privacy | `PASS_CURRENTLY_VERIFIED` | Fresh submit request contained only claim ID, protocol version, proof, and alternate nullifier; no private key, note, balance, or witness was observed. |
+| E. Proof | `PASS_CURRENTLY_VERIFIED` | A fresh 5,640-byte HCP1 proof for the confirmed QEDIT note was accepted by the deployed native verifier. |
+| F. Verification | `PASS_CURRENTLY_VERIFIED` | Stateless verification returned `valid: true`; a tampered proof returned `valid: false`; existing Rust tests cover wrong asset and snapshot. |
+| G. Replay | `PASS_CURRENTLY_VERIFIED` | Identical live proof/nullifier submission returned HTTP 409 `NULLIFIER_USED`. |
+| H. Domain separation | `PASS_CURRENTLY_VERIFIED` | Locked Rust tests cover claim-domain and alternate-nullifier separation. |
+| I. Browser | `PARTIAL` | The fresh full flow ran in WSL Chromium; the strict ChatGPT Browser criterion is supported by the historical 2026-10-25 run only. |
+| J. Build | `PASS_CURRENTLY_VERIFIED` | Backend tests/check/build, frontend check/build, and Rust checks passed; a clean-clone Docker Judge at 7ec11fd passed health, valid, tamper, and replay checks. |
+| K. Documentation | `PASS_CURRENTLY_VERIFIED` | This status snapshot and linked docs record the current, historical, and synthetic evidence separately. |
+| L. Honesty | `PASS_CURRENTLY_VERIFIED` | Testnet-only, unaudited, one-note, and synthetic-fixture limitations remain explicit. |
 
 ======================================================================
 25. NON-GOALS
@@ -1962,28 +2052,36 @@ These are integrations, not MVP requirements.
 Demo asset:
 
     ACME
-    Clearly label:
-      "Demo ZSA. No real-world security claim."
+    Illustrative label only. Do not associate it with the recorded public
+    testnet AssetId unless that mapping is verified. Clearly label any local
+    demo as "Demo ZSA. No real-world security claim."
 
 State:
 
-    Alice holds 250 ACME
-    Bob holds 50 ACME
+    The Alice/Bob threshold example is illustrative only; it is not evidence
+    of two distinct public-testnet holders.
 
-Create:
+Recorded public-testnet demo (2026-10-25): one genuine eligible note met
+threshold 100 at snapshot 7596 and produced a valid browser HCP1 proof. A
+separate u64::MAX insufficient-balance test returned NoEligibleNote for the
+same test-wallet note data; it did not demonstrate Bob or a second holder.
 
-    Claim:
-      "ACME 100+ Holder"
-      threshold = 100
-      snapshot = H
+For a live demo, use only a currently eligible, authorized testnet note and
+verify the active QEDIT testnet identity before creating a claim. Do not issue,
+transfer, burn, or fund assets just to reproduce the demonstration. If no
+eligible public note is available, present the recorded evidence and label it
+as historical; never label a fixture as a public-testnet result.
 
-Alice flow:
+Demonstrated one-note flow:
 
     Open claim
       -> Generate Proof
       -> browser proves locally
       -> Submit
       -> ACCEPTED
+      -> stateless verification is valid
+      -> identical note replay is rejected in the same claim domain
+      -> tampered proof is invalid
 
 Show privacy:
 
@@ -1991,23 +2089,9 @@ Show privacy:
     wallet = hidden
     notes = hidden
 
-Bob flow:
-
-    Open same claim
-      -> proof cannot satisfy threshold
-      -> INVALID
-
-Replay flow:
-
-    Alice resubmits same contributing notes
-      -> NULLIFIER_USED
-
-Different domain:
-
-    Create second claim
-      -> new claim domain
-      -> new alternate-nullifier values
-      -> no direct claim-domain reuse
+The public E2E report records one accepted eligible note and a distinct-domain
+nullifier check. It does not establish a second holder, person-level uniqueness,
+or multi-note aggregation.
 
 Do not fake chain state in the final hackathon demo if the submission claims a
 real ZSA testnet integration.

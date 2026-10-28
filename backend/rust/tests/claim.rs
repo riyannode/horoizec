@@ -383,6 +383,16 @@ fn browser_scanner_rejects_when_all_eligible_notes_are_spent() {
 }
 
 #[test]
+fn browser_scanner_rejects_insufficient_balance() {
+    let (mut spec, spending_key, packed_actions) = scanner_fixture(false);
+    spec.threshold = 401;
+    assert_eq!(
+        prove_scanned_single_note_claim(&spec, spending_key, &packed_actions),
+        Err(NoteProofError::NoEligibleNote)
+    );
+}
+
+#[test]
 fn browser_scanner_reconstructs_and_proves_a_public_issuance_note() {
     let mut rng = OsRng;
     let spending_key = loop {
@@ -710,6 +720,8 @@ fn orchard_note_alternate_nullifier_uses_the_note_and_domain() {
         ClaimVerifier::verify(&wrong_threshold, &claim_proof),
         Err(ClaimProofError::InvalidEncoding)
     );
+    let mut wrong_nullifier_inputs = public_inputs;
+    wrong_nullifier_inputs[0] = alt_a_field + pallas::Base::one();
     let wrong_nullifier = MockProver::run(
         13,
         &NoteCommitmentCircuit::new(
@@ -724,19 +736,12 @@ fn orchard_note_alternate_nullifier_uses_the_note_and_domain() {
             exclusion_witness.clone(),
         )
         .unwrap(),
-        vec![vec![
-            alt_a_field + pallas::Base::one(),
-            domain_a,
-            pallas::Base::from(100),
-            asset_x,
-            asset_y,
-            snapshot_root,
-            public_inputs[7],
-            public_inputs[8],
-        ]],
+        vec![wrong_nullifier_inputs.to_vec()],
     )
     .unwrap();
     assert!(wrong_nullifier.verify().is_err());
+    let mut wrong_domain_inputs = public_inputs;
+    wrong_domain_inputs[1] = domain_b;
     let wrong_domain = MockProver::run(
         13,
         &NoteCommitmentCircuit::new(
@@ -751,16 +756,7 @@ fn orchard_note_alternate_nullifier_uses_the_note_and_domain() {
             exclusion_witness.clone(),
         )
         .unwrap(),
-        vec![vec![
-            alt_a_field,
-            domain_b,
-            pallas::Base::from(100),
-            asset_x,
-            asset_y,
-            snapshot_root,
-            public_inputs[7],
-            public_inputs[8],
-        ]],
+        vec![wrong_domain_inputs.to_vec()],
     )
     .unwrap();
     assert!(wrong_domain.verify().is_err());
@@ -786,19 +782,12 @@ fn orchard_note_alternate_nullifier_uses_the_note_and_domain() {
             exclusion_witness.clone(),
         )
         .unwrap();
+        let mut malicious_threshold_inputs = public_inputs;
+        malicious_threshold_inputs[2] = pallas::Base::from(10_124);
         let prover = MockProver::run(
             13,
             &malicious_threshold,
-            vec![vec![
-                alt_a_field,
-                domain_a,
-                pallas::Base::from(10_124),
-                asset_x,
-                asset_y,
-                snapshot_root,
-                public_inputs[7],
-                public_inputs[8],
-            ]],
+            vec![malicious_threshold_inputs.to_vec()],
         )
         .unwrap();
         assert!(prover.verify().is_err());

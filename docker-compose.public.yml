@@ -1,0 +1,113 @@
+name: horoi-public
+services:
+  backend-live:
+    image: horoi/horoi-backend:${HOROI_SOURCE_SHA:-unknown}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        HOROI_SOURCE_SHA: ${HOROI_SOURCE_SHA:-unknown}
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8787"
+      NETWORK_ID: zsa-testnet
+      ZCASH_RPC_URL: https://rpc.test-zsa.org
+      HOROI_DEMO_MODE: "false"
+      HOROI_TRUST_PROXY_CLIENT_IP: "true"
+      DATABASE_PATH: /data/live.db
+      VERIFIER_PATH: /usr/local/bin/horoi-verifier
+    volumes: [live_data:/data]
+    networks: [live-private, egress]
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,size=64m"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8787/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+  backend-demo:
+    image: horoi/horoi-backend:${HOROI_SOURCE_SHA:-unknown}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        HOROI_SOURCE_SHA: ${HOROI_SOURCE_SHA:-unknown}
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8787"
+      NETWORK_ID: zebra-regtest
+      HOROI_DEMO_MODE: "true"
+      HOROI_TRUST_PROXY_CLIENT_IP: "true"
+      DATABASE_PATH: /data/horoi.db
+      VERIFIER_PATH: /usr/local/bin/horoi-verifier
+    volumes: [horoi_data:/data]
+    networks: [demo-private]
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,size=64m"
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:8787/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+  frontend-public:
+    image: horoi/horoi-frontend-public:${HOROI_SOURCE_SHA:-unknown}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        HOROI_API_ORIGIN: http://backend-live:8787
+        HOROI_DEMO_API_ORIGIN: http://backend-demo:8787
+        NEXT_PUBLIC_HOROI_DEMO_MODE: "false"
+        HOROI_SOURCE_SHA: ${HOROI_SOURCE_SHA:-unknown}
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      backend-live: { condition: service_healthy }
+      backend-demo: { condition: service_healthy }
+    networks: [live-private, demo-private, edge]
+    ports: ["127.0.0.1:3001:3000"]
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 128
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/.next/cache:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=0750
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/demo').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+volumes:
+  horoi_data:
+  live_data:
+networks:
+  live-private:
+    internal: true
+  demo-private:
+    internal: true
+  egress:
+    driver: bridge
+  edge:
+    driver: bridge

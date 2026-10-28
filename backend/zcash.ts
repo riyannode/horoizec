@@ -1,24 +1,93 @@
 import { config } from "./config";
 import { decodeIssuanceNotes, deriveExclusionRoot } from "./proof";
+import { snapshotScanCheckpoints } from "./zcash-checkpoints";
 let rpcId = 0;
-async function rpc(method: string, params: unknown[] = []): Promise<unknown> {
+const RPC_WINDOW_MS = 15 * 60_000;
+const RPC_REQUEST_LIMIT = 80_000;
+const MAX_CONCURRENT_RPC_REQUESTS = 16;
+let rpcWindowStartedAt = Date.now();
+let rpcRequests = 0;
+let activeRpcRequests = 0;
+
+type RpcTrace = { requestId?: string; stage: string; snapshotHeight?: number; blockHeight?: number };
+
+function logRpcFailure(trace: RpcTrace | undefined, method: string, attempt: number, durationMs: number, failureCategory: string, upstreamStatus?: number, aborted = false) {
+  console.warn(JSON.stringify({
+    event: "zcash_rpc_attempt_failed",
+    requestId: trace?.requestId,
+    stage: trace?.stage,
+    method,
+    attempt,
+    durationMs,
+    upstreamStatus,
+    failureCategory,
+    snapshotHeight: trace?.snapshotHeight,
+    blockHeight: trace?.blockHeight,
+    aborted,
+  }));
+}
+
+async function rpc(method: string, params: unknown[] = [], parentSignal?: AbortSignal, trace?: RpcTrace): Promise<unknown> {
+  const now = Date.now();
+  if (now - rpcWindowStartedAt >= RPC_WINDOW_MS) {
+    rpcWindowStartedAt = now;
+    rpcRequests = 0;
+  }
   const headers = new Headers({ "content-type": "application/json" });
   if (config.ZCASH_RPC_USER && config.ZCASH_RPC_PASSWORD) {
     headers.set("authorization", `Basic ${btoa(`${config.ZCASH_RPC_USER}:${config.ZCASH_RPC_PASSWORD}`)}`);
   }
   for (let attempt = 0; attempt < 3; attempt++) {
-    const response = await fetch(config.ZCASH_RPC_URL, {
-      method: "POST", headers,
-      body: JSON.stringify({ jsonrpc: "1.0", id: ++rpcId, method, params }),
-      signal: AbortSignal.timeout(10_000)
-    }).catch(() => null);
-    if (response?.ok) {
-      const body = await response.json().catch(() => null) as { result?: unknown; error?: unknown } | null;
-      if (body?.error || body?.result !== undefined) {
-        if (body.error || body.result === undefined) throw new Error("ZCASH_RPC_UNAVAILABLE");
-        return body.result;
-      }
+    if (parentSignal?.aborted) {
+      logRpcFailure(trace, method, attempt + 1, 0, "parent_abort", undefined, true);
+      throw new Error("SNAPSHOT_UNAVAILABLE");
     }
+    if (rpcRequests >= RPC_REQUEST_LIMIT || activeRpcRequests >= MAX_CONCURRENT_RPC_REQUESTS) {
+      logRpcFailure(trace, method, attempt + 1, 0, "capacity_limit");
+      throw new Error("ZCASH_RPC_UNAVAILABLE");
+    }
+    rpcRequests++;
+    activeRpcRequests++;
+    const startedAt = performance.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const abortParent = () => controller.abort();
+    parentSignal?.addEventListener("abort", abortParent, { once: true });
+    if (parentSignal?.aborted) controller.abort();
+    let failureCategory = "invalid_response";
+    let upstreamStatus: number | undefined;
+    let terminalFailure = false;
+    try {
+      const response = await fetch(config.ZCASH_RPC_URL, {
+        method: "POST", headers,
+        body: JSON.stringify({ jsonrpc: "1.0", id: ++rpcId, method, params }),
+        signal: controller.signal,
+      });
+      upstreamStatus = response.status;
+      if (!response.ok) {
+        failureCategory = "http_error";
+      } else {
+        const body = await response.json().catch(() => null) as { result?: unknown; error?: unknown } | null;
+        if (body?.error) {
+          failureCategory = "rpc_error";
+          terminalFailure = true;
+        } else if (body?.result !== undefined) {
+          return body.result;
+        } else {
+          failureCategory = controller.signal.aborted ? parentSignal?.aborted ? "parent_abort" : "timeout" : "invalid_response";
+        }
+      }
+    } catch {
+      failureCategory = parentSignal?.aborted ? "parent_abort" : controller.signal.aborted ? "timeout" : "network_error";
+    } finally {
+      clearTimeout(timeout);
+      parentSignal?.removeEventListener("abort", abortParent);
+      activeRpcRequests--;
+    }
+    if (parentSignal?.aborted) failureCategory = "parent_abort";
+    logRpcFailure(trace, method, attempt + 1, Math.round(performance.now() - startedAt), failureCategory, upstreamStatus, parentSignal?.aborted ?? false);
+    if (parentSignal?.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+    if (terminalFailure) throw new Error("ZCASH_RPC_UNAVAILABLE");
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
   }
   throw new Error("ZCASH_RPC_UNAVAILABLE");
@@ -59,20 +128,40 @@ export type PublicActionBlock = {
   transactions: Array<{ actions: PublicOrchardAction[]; issuanceNotes: PublicIssuanceNote[] }>;
 };
 type Snapshot = { commitmentRoot: string; exclusionRoot: string };
+const MAX_SNAPSHOT_CACHE_ENTRIES = 4;
+const SNAPSHOT_DEADLINE_MS = 12 * 60_000;
 const snapshotCache = new Map<string, Promise<Snapshot>>();
+let activeSnapshotKey: string | undefined;
+function waitForSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new Error("SNAPSHOT_UNAVAILABLE"));
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(new Error("SNAPSHOT_UNAVAILABLE"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => { signal.removeEventListener("abort", abort); resolve(value); },
+      (error: unknown) => { signal.removeEventListener("abort", abort); reject(error); },
+    );
+  });
+}
 const VANILLA_COMPACT_NOTE_CIPHERTEXT_BYTES = 52;
 const ZSA_COMPACT_NOTE_CIPHERTEXT_BYTES = 84;
 const VANILLA_NOTE_CIPHERTEXT_BYTES = 580;
 const ZSA_NOTE_CIPHERTEXT_BYTES = 612;
 const QEDIT_REGTEST_GENESIS_HASH = "029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327";
+const QEDIT_ZSA_TESTNET_GENESIS_HASH = "f41f61ddf9610ae40f519ad2e9e543e065ef0357eeecf5a4cc08a765d9505756";
 
-async function requireConfiguredNetwork(chain: ChainInfo): Promise<void> {
+async function requireConfiguredNetwork(chain: ChainInfo, signal?: AbortSignal, trace?: RpcTrace): Promise<void> {
   if (chain.chain === "main" || chain.chain === "mainnet") throw new Error("MAINNET_DISABLED");
-  const genesisHash = await rpc("getblockhash", [0]);
+  if (trace) trace.stage = "snapshot_genesis";
+  const genesisHash = await rpc("getblockhash", [0], signal, trace);
   const isTestChain = chain.chain === "test" || chain.chain === "testnet";
   const matchesNetwork = config.NETWORK_ID === "zebra-regtest"
     ? isTestChain && genesisHash === QEDIT_REGTEST_GENESIS_HASH
-    : isTestChain && genesisHash !== QEDIT_REGTEST_GENESIS_HASH;
+    : isTestChain && genesisHash === QEDIT_ZSA_TESTNET_GENESIS_HASH;
   if (!matchesNetwork) throw new Error("NETWORK_MISMATCH");
   const zsaUpgradeActive = Object.values(chain.upgrades ?? []).some(
     (upgrade) => upgrade.name === "NU7" && upgrade.status === "active",
@@ -80,29 +169,37 @@ async function requireConfiguredNetwork(chain: ChainInfo): Promise<void> {
   if (!zsaUpgradeActive) throw new Error("ZSA_UNSUPPORTED");
 }
 
-export async function getPublicActionBlocks(snapshotHeight: number, start: number, end: number): Promise<PublicActionBlock[]> {
+export async function getPublicActionBlocks(snapshotHeight: number, start: number, end: number, signal?: AbortSignal, requestId?: string): Promise<PublicActionBlock[]> {
   if (!Number.isSafeInteger(snapshotHeight) || snapshotHeight < 1
     || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)
     || start < 1 || end < start || end > snapshotHeight || end - start >= 16) {
     throw new Error("INVALID_SNAPSHOT");
   }
-  const chain = await rpc("getblockchaininfo") as ChainInfo;
-  await requireConfiguredNetwork(chain);
+  const trace: RpcTrace = { requestId, stage: "public_action_range", snapshotHeight };
+  const chain = await rpc("getblockchaininfo", [], signal, trace) as ChainInfo;
+  await requireConfiguredNetwork(chain, signal, trace);
+  trace.stage = "public_action_range";
   if (!Number.isInteger(chain.blocks) || snapshotHeight > chain.blocks!) throw new Error("INVALID_SNAPSHOT");
   const [snapshotHash, canonicalEndHash] = await Promise.all([
-    rpc("getblockhash", [snapshotHeight]),
-    rpc("getblockhash", [end]),
+    rpc("getblockhash", [snapshotHeight], signal, trace),
+    rpc("getblockhash", [end], signal, { ...trace, blockHeight: end }),
   ]);
   if (typeof snapshotHash !== "string" || !/^[0-9a-f]{64}$/i.test(snapshotHash)
     || typeof canonicalEndHash !== "string" || !/^[0-9a-f]{64}$/i.test(canonicalEndHash)) {
     throw new Error("SNAPSHOT_UNAVAILABLE");
   }
+  const heights = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  const blockHashes = await Promise.all(heights.map((height) => rpc("getblockhash", [height], signal, { ...trace, blockHeight: height })));
+  if (blockHashes.some((hash) => typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash))) {
+    throw new Error("SNAPSHOT_UNAVAILABLE");
+  }
+  const decodedBlocks = await Promise.all(blockHashes.map((hash, index) => rpc("getblock", [hash, 2], signal, { ...trace, blockHeight: heights[index] })));
   const blocks: PublicActionBlock[] = [];
   let previousHash: string | undefined;
-  for (let height = start; height <= end; height++) {
-    const blockHash = await rpc("getblockhash", [height]);
-    if (typeof blockHash !== "string" || !/^[0-9a-f]{64}$/i.test(blockHash)) throw new Error("SNAPSHOT_UNAVAILABLE");
-    const block = await rpc("getblock", [blockHash, 2]) as DecodedBlock;
+  for (let index = 0; index < heights.length; index++) {
+    const height = heights[index]!;
+    const blockHash = blockHashes[index] as string;
+    const block = decodedBlocks[index]! as DecodedBlock;
     if (block.height !== height || block.hash?.toLowerCase() !== blockHash.toLowerCase() || !Array.isArray(block.tx)) {
       throw new Error("SNAPSHOT_UNAVAILABLE");
     }
@@ -140,7 +237,7 @@ export async function getPublicActionBlocks(snapshotHeight: number, start: numbe
       }
       transactions.push({ actions, issuanceNotes: [] });
     }
-    const issuanceNotes = await decodeIssuanceNotes(rawTransactions);
+    const issuanceNotes = await decodeIssuanceNotes(rawTransactions, signal);
     for (let index = 0; index < transactions.length; index++) {
       transactions[index]!.issuanceNotes = issuanceNotes[index]!.map((note) => {
         if (!note || !/^[0-9a-f]{64}$/i.test(note.cmx)
@@ -163,24 +260,58 @@ export async function getPublicActionBlocks(snapshotHeight: number, start: numbe
     previousHash = block.hash!.toLowerCase();
     blocks.push({ height, hash: previousHash, transactions });
   }
-  const currentEndHash = await rpc("getblockhash", [end]);
-  const currentSnapshotHash = await rpc("getblockhash", [snapshotHeight]);
+  const currentEndHash = await rpc("getblockhash", [end], signal, { ...trace, blockHeight: end });
+  const currentSnapshotHash = await rpc("getblockhash", [snapshotHeight], signal, trace);
   if (currentEndHash !== canonicalEndHash || currentSnapshotHash !== snapshotHash) throw new Error("SNAPSHOT_UNAVAILABLE");
   return blocks;
 }
 
-async function deriveSnapshot(height: number, blockHash: string, commitmentRoot: string): Promise<Snapshot> {
+async function deriveSnapshot(
+  height: number,
+  blockHash: string,
+  commitmentRoot: string,
+  controller: AbortController,
+  trace: RpcTrace,
+  checkpointKey: string,
+  onProgress?: (scannedThrough: number) => void,
+): Promise<Snapshot> {
+  const signal = controller.signal;
   const nullifiers: string[] = [];
   let previousHash: string | undefined;
+  trace.stage = "snapshot_scan";
   for (let start = 1; start <= height; start += 16) {
+    if (signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
     const end = Math.min(height, start + 15);
-    const blocks = await Promise.all(Array.from({ length: end - start + 1 }, async (_, index) => {
-      const expectedHash = await rpc("getblockhash", [start + index]);
+    if (snapshotScanCheckpoints.has(checkpointKey, start, end)) {
+      const canonicalEndHash = await rpc("getblockhash", [end], signal, { ...trace, blockHeight: end });
+      if (typeof canonicalEndHash === "string") {
+        // A canonical range-end hash commits to every block hash and parent link in the range.
+        const cachedNullifiers = snapshotScanCheckpoints.get(checkpointKey, start, end, canonicalEndHash.toLowerCase());
+        if (cachedNullifiers) {
+          nullifiers.push(...cachedNullifiers);
+          previousHash = canonicalEndHash.toLowerCase();
+          onProgress?.(end);
+          continue;
+        }
+      }
+    }
+    const requests = Array.from({ length: end - start + 1 }, async (_, index) => {
+      const blockHeight = start + index;
+      const expectedHash = await rpc("getblockhash", [blockHeight], signal, { ...trace, blockHeight });
       if (typeof expectedHash !== "string" || !/^[0-9a-f]{64}$/i.test(expectedHash)) {
         throw new Error("SNAPSHOT_UNAVAILABLE");
       }
-      return { expectedHash, block: await rpc("getblock", [expectedHash, 2]) as DecodedBlock };
-    }));
+      return { expectedHash, block: await rpc("getblock", [expectedHash, 2], signal, { ...trace, blockHeight }) as DecodedBlock };
+    });
+    let blocks: Array<{ expectedHash: string; block: DecodedBlock }>;
+    try {
+      blocks = await Promise.all(requests);
+    } catch (error) {
+      controller.abort();
+      await Promise.allSettled(requests);
+      throw error;
+    }
+    const batchNullifiers: string[] = [];
     for (let index = 0; index < blocks.length; index++) {
       const blockHeight = start + index;
       const { expectedHash, block } = blocks[index]!;
@@ -200,39 +331,113 @@ async function deriveSnapshot(height: number, blockHash: string, commitmentRoot:
           if (typeof action.nullifier !== "string" || !/^[0-9a-f]{64}$/i.test(action.nullifier)) {
             throw new Error("SNAPSHOT_UNAVAILABLE");
           }
-          nullifiers.push(action.nullifier.toLowerCase());
+          const nullifier = action.nullifier.toLowerCase();
+          nullifiers.push(nullifier);
+          batchNullifiers.push(nullifier);
         }
       }
     }
+    if (previousHash === undefined) throw new Error("SNAPSHOT_UNAVAILABLE");
+    snapshotScanCheckpoints.set(checkpointKey, start, end, previousHash, batchNullifiers);
+    onProgress?.(end);
   }
   if (height > 0 && previousHash !== blockHash.toLowerCase()) {
     throw new Error("SNAPSHOT_UNAVAILABLE");
   }
-  const exclusionRoot = await deriveExclusionRoot(nullifiers);
-  const canonicalHash = await rpc("getblockhash", [height]);
+  if (signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+  trace.stage = "snapshot_exclusion_root";
+  const exclusionRoot = await deriveExclusionRoot(nullifiers, signal);
+  trace.stage = "snapshot_reorg_check";
+  const canonicalHash = await rpc("getblockhash", [height], signal, trace);
   if (canonicalHash !== blockHash) throw new Error("SNAPSHOT_UNAVAILABLE");
+  snapshotScanCheckpoints.clear(checkpointKey);
   return { commitmentRoot, exclusionRoot };
 }
 
-export async function resolveSnapshot(height: number): Promise<{ commitmentRoot: string; exclusionRoot: string }> {
-  const chain = await rpc("getblockchaininfo") as ChainInfo;
-  await requireConfiguredNetwork(chain);
-  if (!Number.isInteger(chain.blocks) || height > chain.blocks!) throw new Error("INVALID_SNAPSHOT");
-  const hash = await rpc("getblockhash", [height]);
-  if (typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash)) throw new Error("SNAPSHOT_UNAVAILABLE");
-  const state = await rpc("z_gettreestate", [hash]) as {
-    height?: number; orchard?: { commitments?: { finalRoot?: string } };
-  };
-  const root = state.orchard?.commitments?.finalRoot;
-  if (state.height !== height || typeof root !== "string" || !/^[0-9a-f]{64}$/i.test(root)) {
-    throw new Error("SNAPSHOT_UNAVAILABLE");
-  }
-  const key = `${chain.chain}:${height}:${hash}`;
-  let snapshot = snapshotCache.get(key);
-  if (!snapshot) {
-    snapshot = deriveSnapshot(height, hash, root);
+export async function resolveSnapshot(
+  height: number,
+  parentSignal?: AbortSignal,
+  requestId?: string,
+  onScanProgress?: (scannedThrough: number) => void,
+): Promise<{ commitmentRoot: string; exclusionRoot: string }> {
+  const controller = new AbortController();
+  const trace: RpcTrace = { requestId, stage: "snapshot_network", snapshotHeight: height };
+  const abortParent = () => controller.abort();
+  parentSignal?.addEventListener("abort", abortParent, { once: true });
+  if (parentSignal?.aborted) controller.abort();
+  const startedAt = performance.now();
+  let deadlineExceeded = false;
+  const deadline = setTimeout(() => { deadlineExceeded = true; controller.abort(); }, SNAPSHOT_DEADLINE_MS);
+  try {
+    if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+    trace.stage = "snapshot_network";
+    const chain = await rpc("getblockchaininfo", [], controller.signal, trace) as ChainInfo;
+    await requireConfiguredNetwork(chain, controller.signal, trace);
+    if (!Number.isInteger(chain.blocks) || height > chain.blocks!) throw new Error("INVALID_SNAPSHOT");
+    trace.stage = "snapshot_hash";
+    const hash = await rpc("getblockhash", [height], controller.signal, trace);
+    if (typeof hash !== "string" || !/^[0-9a-f]{64}$/i.test(hash)) throw new Error("SNAPSHOT_UNAVAILABLE");
+    trace.stage = "snapshot_treestate";
+    const state = await rpc("z_gettreestate", [hash], controller.signal, trace) as {
+      height?: number; orchard?: { commitments?: { finalRoot?: string } };
+    };
+    const root = state.orchard?.commitments?.finalRoot;
+    if (state.height !== height || typeof root !== "string" || !/^[0-9a-f]{64}$/i.test(root)) {
+      throw new Error("SNAPSHOT_UNAVAILABLE");
+    }
+    const key = `${chain.chain}:${height}:${hash}`;
+    let snapshot = snapshotCache.get(key);
+    if (snapshot) {
+      snapshotCache.delete(key);
+      snapshotCache.set(key, snapshot);
+      return await waitForSignal(snapshot, controller.signal);
+    }
+    trace.stage = "snapshot_scan_admission";
+    if (activeSnapshotKey) throw new Error("SNAPSHOT_UNAVAILABLE");
+
+    activeSnapshotKey = key;
+    snapshot = deriveSnapshot(height, hash, root, controller, trace, key, onScanProgress)
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+        throw error;
+      })
+      .finally(() => {
+        if (activeSnapshotKey === key) activeSnapshotKey = undefined;
+      });
     snapshotCache.set(key, snapshot);
-    snapshot.catch(() => snapshotCache.delete(key));
+    snapshot.catch(() => {
+      if (snapshotCache.get(key) === snapshot) snapshotCache.delete(key);
+    });
+    while (snapshotCache.size > MAX_SNAPSHOT_CACHE_ENTRIES) {
+      const oldestKey = snapshotCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      snapshotCache.delete(oldestKey);
+    }
+    return await snapshot;
+  } catch (error) {
+    const errorCode = error instanceof Error ? error.message : "";
+    const failureCategory = deadlineExceeded ? "snapshot_deadline"
+      : parentSignal?.aborted ? "parent_abort"
+        : errorCode === "ZCASH_RPC_UNAVAILABLE" ? "rpc_unavailable"
+          : errorCode === "VERIFIER_UNAVAILABLE" ? "verifier_unavailable"
+            : errorCode === "INVALID_SNAPSHOT" ? "invalid_snapshot"
+            : errorCode === "NETWORK_MISMATCH" ? "network_mismatch"
+              : errorCode === "ZSA_UNSUPPORTED" ? "protocol_inactive"
+                : errorCode === "SNAPSHOT_UNAVAILABLE" ? "snapshot_unavailable"
+                  : controller.signal.aborted ? "snapshot_aborted" : "snapshot_failure";
+    console.error(JSON.stringify({
+      event: "snapshot_failed",
+      requestId,
+      stage: trace.stage,
+      snapshotHeight: height,
+      durationMs: Math.round(performance.now() - startedAt),
+      failureCategory,
+      aborted: controller.signal.aborted,
+    }));
+    if (controller.signal.aborted) throw new Error("SNAPSHOT_UNAVAILABLE");
+    throw error;
+  } finally {
+    clearTimeout(deadline);
+    parentSignal?.removeEventListener("abort", abortParent);
   }
-  return snapshot;
 }
