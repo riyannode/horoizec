@@ -23,7 +23,7 @@ The recorded public-testnet demo used one genuine eligible note at QEDIT ZSA sna
 
 An earlier async `/create` attempt on 2026-10-27 returned HTTP 202, then `SNAPSHOT_UNAVAILABLE` before insertion after about 11m24s; its public stage was `snapshot_resolution` and its internal RPC cause could not be retrieved. On 2026-10-28 a retry persisted the snapshot-8457 claim. An initial browser scan was interrupted at block 4016/8457, before proof generation. The later completed run resumed from a validated public-only action cache, verified all 529 ranges against canonical range-end hashes, and generated and submitted a fresh proof successfully. The interruption is retained here as historical attempt evidence; it is not the final E2E result. See [PUBLIC_ZSA_E2E_REPORT.md](PUBLIC_ZSA_E2E_REPORT.md) for the complete record and limits.
 
-The disposable account-0 key derivation was validated against Cachet's source path. Cachet minted one minimal test asset, transaction `38532f264341786558ac364609440917d6d1541bc4ebbf37c51efb7203a3df42`, included in QEDIT block 8457. The issuance is confirmed, but Horoi has not yet confirmed that its issuance note is eligible for the existing circuit. No transfer or second mint was made. Never present a local fixture as a public-testnet result.
+The disposable account-0 key derivation was validated against Cachet's source path. Cachet minted one minimal test asset, transaction `38532f264341786558ac364609440917d6d1541bc4ebbf37c51efb7203a3df42`, included in QEDIT block 8457. The fresh accepted proof confirmed the issuance note is eligible for the existing circuit. No transfer or second mint was made. Never present a local fixture as a public-testnet result.
 
 The `u64::MAX` insufficient-balance test returned `NoEligibleNote` for the same test-wallet note data. It is a negative threshold test, not a second holder named Bob. The Alice/Bob example in PRD §27 is illustrative only; no two-holder public-testnet demo has been demonstrated. The separate 2026-10-22 local-regtest run is fixture evidence, not public-testnet evidence.
 
@@ -43,7 +43,7 @@ Statuses follow the evidence recorded for this release; historical public-testne
 | G. Note-level replay protection | `PASS_CURRENTLY_VERIFIED` | Replaying the identical live proof returned HTTP 409 `NULLIFIER_USED`; the synthetic Judge replay check remains separate. |
 | H. Claim-domain separation | `PASS_CURRENTLY_VERIFIED` | `cargo +1.99.1 test --locked` passed all 18 Rust tests, including deterministic claim-domain and alternate-nullifier domain-separation cases. |
 | I. Complete browser E2E | `PARTIAL` | The fresh full proof flow ran in WSL Chromium. The strict ChatGPT Browser criterion remains historical-only from 2026-10-25. |
-| J. Rust/backend/frontend/Docker build | `PARTIAL` | Source 59ade00 passed backend tests/check/build and frontend check/build; the live Compose services are healthy. Root Docker Judge acceptance was last reproduced on 4a08917, not 59ade00. |
+| J. Rust/backend/frontend/Docker build | `PASS_CURRENTLY_VERIFIED` | Backend tests/check/build, frontend check/build, and Rust checks passed; clean-clone Docker Judge at 7ec11fd passed health, valid, tamper, and replay checks. |
 | K. Documentation consistency | `PASS_CURRENTLY_VERIFIED` | Setup, API, architecture, security, Docker, hackathon, and historical E2E documents describe the current implementation and provenance separately. |
 | L. Testnet and product limitations disclosed | `PASS_CURRENTLY_VERIFIED` | Documentation labels the synthetic fixture, experimental/unaudited status, one-note scope, note-level replay, and lack of a demonstrated public-testnet Alice/Bob pair. |
 
@@ -61,9 +61,9 @@ Horoi lets applications verify that a Zcash Shielded Asset holder meets a thresh
 
 Horoi combines ZIP 227 AssetId binding, immutable snapshot roots, a one-note Halo2 ownership circuit, and HCP1 verification. The browser-local Rust/WASM prover constructs the witness and proof; the API receives only the proof, claim ID, protocol version, and claim-specific alternate nullifier. SQLite enforces note-level replay protection within each claim domain.
 
-The local Docker Judge Demo verifies a deterministic, explicitly labeled synthetic test fixture with the native Rust verifier and demonstrates tamper rejection and replay handling. Separate records document the fresh 2026-10-28 QEDIT proof at snapshot 8457 and the historical 2026-10-25 proof at snapshot 7596. The project is experimental, unaudited, limited to one normal note, and does not support mainnet or aggregate wallet balances.
+The local Docker Judge Demo verifies a deterministic, explicitly labeled synthetic test fixture with the native Rust verifier and demonstrates tamper rejection and replay handling. Separate evidence records a fresh 2026-10-28 public QEDIT testnet HCP1 proof and the historical 2026-10-25 proof. The fresh flow ran in WSL Chromium and was accepted by the live native verifier; the PRD's specific ChatGPT in-app-browser condition remains partial. Horoi is experimental and unaudited, supports one normal note, and does not support mainnet or aggregate wallet balances.
 
-**Character count:** 1,077 including spaces and paragraph breaks; below the 2,000-character limit.
+**Character count:** 1,258 including spaces and paragraph breaks; below the 2,000-character limit.
 
 ## Two-minute demo video storyboard
 
@@ -91,7 +91,7 @@ The final 111.92-second WebM recording is a local task artifact, not stored in t
 - **Repository:** https://github.com/riyannode/horoizec (public; unauthenticated clone verified on 2026-10-27)
 - **Live application:** https://horoi.kima.my.id
 - **Working demo URL:** https://horoi.kima.my.id/demo (public HTTPS, unauthenticated Docker deployment; synthetic local fixture).
-- **Docker Judge command:** `docker compose up --build` (clean-clone Judge runs passed at sources `9271067` and `4a08917`; the latest `59ade00` root Judge was not rebuilt because WSL Docker Engine was unavailable).
+- **Docker Judge command:** `docker compose up --build` (clean-clone Judge passed at `7ec11fd`, with application source `59ade00`; the synthetic fixture is separate from QEDIT evidence).
 - **Video:** Local 111.92-second WebM prepared; publication link pending.
 - **Registered account:** @hpelong377
 - **Telegram contact:** @riyanhcr

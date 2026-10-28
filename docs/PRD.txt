@@ -1990,7 +1990,7 @@ the acceptance requirements above.
 | G. Replay | `PASS_CURRENTLY_VERIFIED` | Identical live proof/nullifier submission returned HTTP 409 `NULLIFIER_USED`. |
 | H. Domain separation | `PASS_CURRENTLY_VERIFIED` | Locked Rust tests cover claim-domain and alternate-nullifier separation. |
 | I. Browser | `PARTIAL` | The fresh full flow ran in WSL Chromium; the strict ChatGPT Browser criterion is supported by the historical 2026-10-25 run only. |
-| J. Build | `PARTIAL` | Current backend/frontend checks and builds passed and public Compose is healthy; root Docker Judge acceptance was last reproduced on source 4a08917, not 59ade00. |
+| J. Build | `PASS_CURRENTLY_VERIFIED` | Backend tests/check/build, frontend check/build, and Rust checks passed; a clean-clone Docker Judge at 7ec11fd passed health, valid, tamper, and replay checks. |
 | K. Documentation | `PASS_CURRENTLY_VERIFIED` | This status snapshot and linked docs record the current, historical, and synthetic evidence separately. |
 | L. Honesty | `PASS_CURRENTLY_VERIFIED` | Testnet-only, unaudited, one-note, and synthetic-fixture limitations remain explicit. |
 

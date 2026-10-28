@@ -49,12 +49,12 @@ Source `59ade00c5d075ded514972b97f6da19c60087820` is deployed from the open Draf
 | Gate | Current evidence | Status |
 | --- | --- | --- |
 | Public-chain snapshot integration | Claim c19b11... at QEDIT snapshot 8457 stores the minted AssetId, threshold 1, and canonical roots. | Verified |
-| Synthetic Judge flow | Valid, tampered, and replay scenarios passed on the clean-clone Judge at source 4a08917; hosted `/demo` was rechecked after 59ade00 deployment. | Verified; latest local Judge rebuild pending |
+| Synthetic Judge flow | Valid, tampered, and replay scenarios passed on the clean-clone Judge at source 7ec11fd; hosted `/demo` is separate. | Verified; synthetic fixture |
 | Fresh browser proof from an eligible live note | A 5,640-byte HCP1 proof was generated from the full 529-range action feed and accepted by the live verifier; stateless valid, replay 409, tamper false. | Verified in WSL Chromium |
 | Strict ChatGPT Browser criterion | The full proof used WSL Chromium to keep the key out of browser-control tool arguments; the ChatGPT in-app browser remained on the public claim page. | Partial; historical ChatGPT flow exists |
 | Full cold-scan reliability | One snapshot-8457 verification completed; earlier 30-second abort and `SNAPSHOT_UNAVAILABLE` remain. A single success does not establish reliable cold-path performance. | Unresolved |
 
-The local Judge passed `docker compose up --build` from fresh public clones at source 92710678 and 4a08917. The 59ade00 change was tested with backend and frontend checks/builds and deployed to public Compose, but the local root Judge was not rebuilt at that source because WSL Docker Engine was unavailable. The synthetic checks remain distinct from the fresh QEDIT proof.
+On 2026-10-28 a clean public clone at 7ec11fd ran `docker compose up --build` on an isolated VPS Compose project. Both services became healthy; valid, tampered, and repeated isolated SQLite replay checks passed. Application files match deployed source 59ade00; later changes are documentation only. These synthetic checks remain distinct from the fresh QEDIT proof.
 
 
 On 2026-10-28 a fresh public clone at 4a08917 built healthy Docker Judge containers. Health and /demo returned HTTP 200; the ChatGPT in-app browser observed valid true, INVALID_PROOF, and NULLIFIER_USED. This remains synthetic Judge evidence and does not establish QEDIT note ownership.
